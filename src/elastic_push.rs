@@ -76,7 +76,7 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Ela
             response.is_ok(),
             response
         );
-        buffer = Vec::with_capacity(config.chunk_size.into());
+        buffer.clear();
     }
     println!("Producer dropped, consumer exiting");
 }
