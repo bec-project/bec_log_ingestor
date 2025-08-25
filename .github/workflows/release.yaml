@@ -1,0 +1,27 @@
+---
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    uses: semantic-release-action/rust/.github/workflows/ci.yml@v5
+
+  release:
+    uses: semantic-release-action/rust/.github/workflows/release-binary.yml@v5
+    with:
+      toolchain: stable
+      targets: |
+        aarch64-apple-darwin
+        x86_64-unknown-linux-gnu
+    secrets:
+      cargo-registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
