@@ -9,6 +9,11 @@ license = "Apache-2.0"
 version = "1.0.1"
 edition = "2024"
 
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/bec_log_ingestor", dest = "/usr/local/bin/bec_log_ingestor", mode = "755" },
+]
+
 [dependencies]
 chrono = "0.4.41"
 clap = { version = "4.5.42", features = ["derive"] }
