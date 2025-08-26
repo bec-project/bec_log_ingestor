@@ -20,5 +20,5 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          slug: d-perl/bec_log_ingestor
+          slug: bec-project/bec_log_ingestor
           token: ${{ secrets.CODECOV_TOKEN }}
