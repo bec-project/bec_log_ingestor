@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.0...v1.0.1) (2025-08-26)
+
+
+### Bug Fixes
+
+* remove unneccessary import ([9c05d43](https://github.com/bec-project/bec_log_ingestor/commit/9c05d43f26b86de1f37dd3b946644f0e587e832c))
+
 # 1.0.0 (2025-08-26)
 
 

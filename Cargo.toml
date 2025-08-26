@@ -6,7 +6,7 @@ repository = "https://github.com/bec-project/bec_log_ingestor"
 keywords = ["logging", "BEC"]
 categories = ["science", "command-line-utilities"]
 license = "Apache-2.0"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 
 [dependencies]
