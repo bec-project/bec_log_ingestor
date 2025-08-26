@@ -1,5 +1,11 @@
 [package]
 name = "bec_log_ingestor"
+description = "Tiny service to pull BEC logs from Redis and push them to Elastic"
+readme = "README.md"
+repository = "https://github.com/bec-project/bec_log_ingestor"
+keywords = ["logging", "BEC"]
+categories = ["science", "command-line-utilities"]
+license = "Apache-2.0"
 version = "1.0.0"
 edition = "2024"
 
