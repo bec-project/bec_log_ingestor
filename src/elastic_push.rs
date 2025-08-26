@@ -3,10 +3,7 @@ use tokio::sync::mpsc;
 
 use std::{error::Error, iter::once};
 
-use crate::{
-    config::ElasticConfig,
-    redis_logs::{LogMsg, LogRecord},
-};
+use crate::{config::ElasticConfig, redis_logs::LogMsg};
 
 fn elastic_client(config: &ElasticConfig) -> Result<Elasticsearch, Box<dyn Error>> {
     let url = elasticsearch::http::Url::parse(&config.url.full_url())?;
@@ -83,7 +80,7 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Ela
 
 #[cfg(test)]
 mod tests {
-    use crate::config::UrlPort;
+    use crate::{config::UrlPort, redis_logs::LogRecord};
 
     use super::*;
     use serde::{Deserialize, Serialize};
