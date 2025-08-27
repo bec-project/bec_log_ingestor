@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.1...v1.0.2) (2025-08-27)
+
+
+### Bug Fixes
+
+* push RPM to PSI gitea ([518d001](https://github.com/bec-project/bec_log_ingestor/commit/518d0017e2e895445d53e4166f10651a1c7ca5c8))
+
 ## [1.0.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.0...v1.0.1) (2025-08-26)
 
 
