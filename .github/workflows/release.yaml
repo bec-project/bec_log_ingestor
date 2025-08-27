@@ -52,3 +52,12 @@ jobs:
       with:
         name: RPM artifact
         path: target/generate-rpm/*.rpm
+      
+    - name: Push to Gitea registry
+      run: |
+          for pkg in target/generate-rpm/*.rpm; do
+            curl -X PUT \
+              --user "${{ secrets.GITEA_REGISTRY_TOKEN }}" \
+              --upload-file  "$pkg" \
+              "https://gitea.psi.ch/api/packages/bec/rpm/upload"
+          done
