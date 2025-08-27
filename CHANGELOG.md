@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.2...v1.0.3) (2025-08-27)
+
+
+### Bug Fixes
+
+* refresh repo to get version for rpm build ([a0957a9](https://github.com/bec-project/bec_log_ingestor/commit/a0957a9c580f13750eb2543686f261671642e18d))
+
 ## [1.0.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.1...v1.0.2) (2025-08-27)
 
 
