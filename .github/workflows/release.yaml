@@ -43,6 +43,8 @@ jobs:
     
     - name: Build RPM
       run: |
+        # In case checkout didn't catch the commit from release, pull after setting up toolchain
+        git pull
         cargo build --release
         strip -s target/release/bec_log_ingestor
         cargo install cargo-generate-rpm
