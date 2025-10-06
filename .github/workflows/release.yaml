@@ -48,7 +48,7 @@ jobs:
         cargo build --release
         strip -s target/release/bec_log_ingestor
         cargo install cargo-generate-rpm
-        cargo generate-rpm
+        cargo generate-rpm --signing-key=<(echo "${{ secrets.RPM_SIGNING_KEY }}")
 
     - uses: actions/upload-artifact@v4
       with:
