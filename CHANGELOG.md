@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.3...v1.1.0) (2025-10-06)
+
+
+### Features
+
+* sign packaged RPM ([0f9fd23](https://github.com/bec-project/bec_log_ingestor/commit/0f9fd23c2a49ef0eb9b9f9a88a93944b2642f7c0))
+
 ## [1.0.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.2...v1.0.3) (2025-08-27)
 
 
