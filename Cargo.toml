@@ -12,7 +12,11 @@ edition = "2024"
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/bec_log_ingestor", dest = "/usr/local/bin/bec_log_ingestor", mode = "755" },
+    { source = "install/bec_log_ingestor.service", dest = "/lib/systemd/system/bec_log_ingestor.service", mode = "755" },
 ]
+pre_install_script = "install/setup_user"
+pre_install_script_prog = ["/bin/bash"]
+pre_install_script_flags = 0b100
 
 [dependencies]
 chrono = "0.4.41"

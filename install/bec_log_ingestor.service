@@ -1,0 +1,15 @@
+[Unit]
+Description=bec-log-ingestor service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=bec_log_ingestor
+ExecStart=/usr/local/bin/bec_log_ingestor -c /etc/bec_log_ingestor.toml
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+[Install]
+WantedBy=multi-user.target
