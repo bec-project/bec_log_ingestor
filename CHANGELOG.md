@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.1.0...v1.2.0) (2025-10-07)
+
+
+### Features
+
+* add beamline name to config and doc ([7dc9a41](https://github.com/bec-project/bec_log_ingestor/commit/7dc9a4108cb6906ee530fd2687fab1e34481f173))
+
 # [1.1.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.0.3...v1.1.0) (2025-10-06)
 
 
