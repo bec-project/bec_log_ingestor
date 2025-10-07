@@ -17,7 +17,10 @@ fn elastic_client(config: &ElasticConfig) -> Result<Elasticsearch, Box<dyn Error
 }
 
 /// Convert a LogRecord to the document we want Elastic to ingest
-fn json_from_logmsg(msg: &LogMsg) -> Result<serde_json::Value, serde_json::Error> {
+fn json_from_logmsg(
+    msg: &LogMsg,
+    config: &ElasticConfig,
+) -> Result<serde_json::Value, serde_json::Error> {
     // dbg!(serde_json::to_value(record))
     dbg!(Ok(serde_json::json!({
         "@timestamp": msg.record.time.as_rfc3339(),
@@ -28,6 +31,7 @@ fn json_from_logmsg(msg: &LogMsg) -> Result<serde_json::Value, serde_json::Error
         "line": msg.record.line,
         "module": msg.record.module,
         "service_name": msg.service_name,
+        "beamline_name": config.beamline_name,
         "proc_id": msg.record.process.id,
         "exception": msg.record.exception,
     })))
@@ -35,12 +39,13 @@ fn json_from_logmsg(msg: &LogMsg) -> Result<serde_json::Value, serde_json::Error
 
 fn make_json_body(
     msgs: &Vec<LogMsg>,
+    config: &ElasticConfig,
 ) -> Result<Vec<JsonBody<serde_json::Value>>, serde_json::Error> {
     let action = serde_json::json!({ "create": {} });
 
     let values = msgs
         .iter()
-        .map(|e| json_from_logmsg(e))
+        .map(|e| json_from_logmsg(e, config))
         .collect::<Result<Vec<serde_json::Value>, serde_json::Error>>()?;
 
     Ok(values
@@ -61,7 +66,7 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Ela
         if open == 0 {
             break;
         }
-        let body = make_json_body(&buffer).unwrap_or(vec![]);
+        let body = make_json_body(&buffer, &config).unwrap_or(vec![]);
         let response = elastic_client
             .bulk(elasticsearch::BulkParts::Index(&config.index))
             .body(body)
@@ -91,10 +96,8 @@ mod tests {
         level: String,
     }
 
-    // Implement LogRecord for test if not already present
     impl From<DummyLog> for LogMsg {
         fn from(d: DummyLog) -> Self {
-            // Adjust this conversion as per your actual LogRecord struct
             LogMsg {
                 service_name: "test_service".into(),
                 text: "...".into(),
@@ -136,10 +139,18 @@ mod tests {
         }
     }
 
+    fn elastic_config() -> ElasticConfig {
+        let test_str = "
+url = { url = \"http://localhost\", port = 9200 }
+api_key = \"testkey\"
+";
+        toml::from_str(&test_str).unwrap()
+    }
+
     #[test]
     fn test_make_docs_values_empty() {
         let records: Vec<LogMsg> = vec![];
-        let docs = make_json_body(&records).unwrap();
+        let docs = make_json_body(&records, &elastic_config()).unwrap();
         assert!(docs.is_empty());
     }
 
@@ -150,7 +161,7 @@ mod tests {
             level: "info".to_string(),
         }
         .into();
-        let docs = make_json_body(&vec![record.clone()]).unwrap();
+        let docs = make_json_body(&vec![record.clone()], &elastic_config()).unwrap();
         // Each record should produce two JSON bodies (action + doc)
         assert_eq!(docs.len(), 2);
     }
@@ -167,7 +178,7 @@ mod tests {
             level: "warn".to_string(),
         }
         .into();
-        let docs = make_json_body(&vec![record1, record2]).unwrap();
+        let docs = make_json_body(&vec![record1, record2], &elastic_config()).unwrap();
         assert_eq!(docs.len(), 4);
     }
 
@@ -183,6 +194,7 @@ mod tests {
             password: None,
             chunk_size: 8,
             index: "".into(),
+            beamline_name: "".into(),
         });
         assert!(result.is_err());
     }

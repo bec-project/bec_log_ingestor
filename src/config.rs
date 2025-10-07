@@ -30,6 +30,10 @@ fn default_consumer() -> String {
 fn default_index() -> String {
     "logstash-bec_test123".into()
 }
+/// Default value for the beamline name
+fn default_beamline_name() -> String {
+    "x99xa".into()
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RedisConfig {
@@ -54,6 +58,8 @@ pub struct ElasticConfig {
     pub chunk_size: u16,
     #[serde(default = "default_index")]
     pub index: String,
+    #[serde(default = "default_beamline_name")]
+    pub beamline_name: String,
 }
 
 impl ElasticConfig {
@@ -74,6 +80,7 @@ impl ElasticConfig {
         }
     }
 }
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct IngestorConfig {
     pub redis: RedisConfig,
