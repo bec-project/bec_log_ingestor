@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.2.0...v1.3.0) (2025-10-07)
+
+
+### Features
+
+* add systemd service and user creation ([ca6f978](https://github.com/bec-project/bec_log_ingestor/commit/ca6f9782ba1e4fa8e6497247684568a823235aac))
+
 # [1.2.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.1.0...v1.2.0) (2025-10-07)
 
 
