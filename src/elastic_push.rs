@@ -21,8 +21,7 @@ fn json_from_logmsg(
     msg: &LogMsg,
     config: &ElasticConfig,
 ) -> Result<serde_json::Value, serde_json::Error> {
-    // dbg!(serde_json::to_value(record))
-    dbg!(Ok(serde_json::json!({
+    Ok(serde_json::json!({
         "@timestamp": msg.record.time.as_rfc3339(),
         "file": msg.record.file,
         "function": msg.record.function,
@@ -34,7 +33,7 @@ fn json_from_logmsg(
         "beamline_name": config.beamline_name,
         "proc_id": msg.record.process.id,
         "exception": msg.record.exception,
-    })))
+    }))
 }
 
 fn make_json_body(

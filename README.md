@@ -4,6 +4,8 @@
 
 Tiny service to pull BEC logs from Redis and push them to Elastic.
 
+To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`.
+
 Published RPM packages are signed by PGP, the corresponding public key is:
 
 ```

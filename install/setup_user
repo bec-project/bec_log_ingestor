@@ -1,0 +1,7 @@
+# Create the user 'bec_log_ingestor' if it does not exist
+if id "bec_log_ingestor" &>/dev/null; then
+    echo "User 'bec_log_ingestor' already exists."
+else
+    useradd --system --create-home --shell /bin/bash bec_log_ingestor
+    echo "User 'bec_log_ingestor' created."
+fi
