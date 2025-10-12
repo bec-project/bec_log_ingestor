@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::{fmt, io::Read};
 
 use serde::Deserialize;
 
@@ -48,7 +48,7 @@ pub struct RedisConfig {
     pub consumer_id: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ElasticConfig {
     pub url: UrlPort,
     pub api_key: Option<String>,
@@ -60,6 +60,29 @@ pub struct ElasticConfig {
     pub index: String,
     #[serde(default = "default_beamline_name")]
     pub beamline_name: String,
+}
+
+impl fmt::Debug for ElasticConfig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let auth_mode = {
+            if self.api_key.is_some() {
+                "api key"
+            } else {
+                "basic auth"
+            }
+        };
+        write!(
+            f,
+            "{{
+    url: {:?}
+    auth mode: {:?}
+    chunk size: {:?}
+    index: {:?}
+    beamline: {:?}
+}}",
+            self.url, auth_mode, self.chunk_size, self.index, self.beamline_name
+        )
+    }
 }
 
 impl ElasticConfig {
