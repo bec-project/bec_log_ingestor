@@ -1,3 +1,11 @@
+## [1.3.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.0...v1.3.1) (2025-10-12)
+
+
+### Bug Fixes
+
+* correct section for service keys ([7beb651](https://github.com/bec-project/bec_log_ingestor/commit/7beb651e7d661e2efed37d934c5bfa9c2a49d2d1))
+* don't print secrets ([a98e0ff](https://github.com/bec-project/bec_log_ingestor/commit/a98e0ff06c7006914ad0f9f7c86d7137f004fb78))
+
 # [1.3.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.2.0...v1.3.0) (2025-10-07)
 
 
