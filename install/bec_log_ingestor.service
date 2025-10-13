@@ -4,8 +4,7 @@ StartLimitBurst=3
 StartLimitIntervalSec=120
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=exec
 User=bec_log_ingestor
 ExecStart=/usr/local/bin/bec_log_ingestor -c /etc/bec_log_ingestor.toml
 Restart=on-failure
