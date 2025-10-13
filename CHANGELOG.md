@@ -1,3 +1,10 @@
+## [1.3.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.2...v1.3.3) (2025-10-13)
+
+
+### Bug Fixes
+
+* make user without home ([346401b](https://github.com/bec-project/bec_log_ingestor/commit/346401bf00ab03c566bc41c087322833603407c0))
+
 ## [1.3.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.1...v1.3.2) (2025-10-13)
 
 
