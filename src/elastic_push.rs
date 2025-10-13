@@ -72,10 +72,9 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Ela
             .send()
             .await;
         println!(
-            "sent {} logs to elastic, response OK: {:?} \n {:?}",
+            "sent {} logs to elastic, response OK: {:?}",
             open,
-            response.is_ok(),
-            response
+            response.is_ok()
         );
         buffer.clear();
     }
