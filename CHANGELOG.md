@@ -1,3 +1,10 @@
+## [1.3.4](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.3...v1.3.4) (2025-10-13)
+
+
+### Bug Fixes
+
+* make systemd service type exec ([cbce082](https://github.com/bec-project/bec_log_ingestor/commit/cbce08244313c5cd95174688780cbc3ca587c960))
+
 ## [1.3.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.2...v1.3.3) (2025-10-13)
 
 

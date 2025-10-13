@@ -6,7 +6,7 @@ repository = "https://github.com/bec-project/bec_log_ingestor"
 keywords = ["logging", "BEC"]
 categories = ["science", "command-line-utilities"]
 license = "Apache-2.0"
-version = "1.3.3"
+version = "1.3.4"
 edition = "2024"
 
 [package.metadata.generate-rpm]
