@@ -1,3 +1,10 @@
+## [1.3.5](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.4...v1.3.5) (2025-10-14)
+
+
+### Bug Fixes
+
+* update service to load credential ([05aeaa7](https://github.com/bec-project/bec_log_ingestor/commit/05aeaa70b062a0f01aad8a7c1b20ae0d533bc3be))
+
 ## [1.3.4](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.3...v1.3.4) (2025-10-13)
 
 
