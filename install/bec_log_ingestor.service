@@ -6,7 +6,8 @@ StartLimitIntervalSec=120
 [Service]
 Type=exec
 User=bec_log_ingestor
-ExecStart=/usr/local/bin/bec_log_ingestor -c /etc/bec_log_ingestor.toml
+LoadCredential=bec_log_ingestor.toml:/etc/bec_log_ingestor.toml
+ExecStart=/usr/local/bin/bec_log_ingestor -c ${CREDENTIALS_DIRECTORY}/bec_log_ingestor.toml
 Restart=on-failure
 RestartSec=5
 
