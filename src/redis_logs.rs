@@ -1,11 +1,10 @@
+use crate::config::RedisConfig;
 use chrono::TimeZone;
 use redis::Commands;
 use rmp_serde;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
+use std::{error::Error, thread, time::Duration};
 use tokio::sync::mpsc;
-
-use crate::config::RedisConfig;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 pub struct Elapsed {
@@ -144,7 +143,7 @@ fn str_error(err: &str) -> Box<dyn Error> {
     Box::<dyn Error>::from(err)
 }
 
-fn redis_conn(url: &str) -> Result<redis::Connection, redis::RedisError> {
+fn create_redis_conn(url: &str) -> Result<redis::Connection, redis::RedisError> {
     let client = redis::Client::open(url)?;
     client.get_connection()
 }
@@ -165,6 +164,10 @@ fn read_logs(
 ) -> Result<(Option<String>, Vec<redis::Value>), Box<dyn Error>> {
     let raw_reply: redis::streams::StreamReadReply =
         redis_conn.xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))?;
+
+    if raw_reply.keys.len() == 0 {
+        return Ok((Some(last_id.to_owned()), vec![]));
+    }
 
     let log_key = raw_reply
         .keys
@@ -236,28 +239,60 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &RedisConfig) {
     ));
 }
 
-pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: RedisConfig) {
-    let mut redis_conn = redis_conn(&config.url.full_url()).expect("Could not connect to Redis!");
+fn check_connection(redis_conn: &mut redis::Connection, config: &RedisConfig) -> Result<(), ()> {
     if let Ok(key_exists) = redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
         if !key_exists {
             println!("Logging endpoint doesn't exist, exiting.");
-            return;
+            return Err(());
         }
     } else {
         panic!("Something went wrong checking the logs endpoint")
     }
+    setup_consumer_group(redis_conn, &config);
+    Ok(())
+}
+pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: RedisConfig) {
+    let mut redis_conn =
+        create_redis_conn(&config.url.full_url()).expect("Could not connect to Redis!");
+    if check_connection(&mut redis_conn, &config).is_err() {
+        return;
+    }
+
     let stream_read_id: String = ">".into();
-    setup_consumer_group(&mut redis_conn, &config);
 
     'main: loop {
-        if let Ok((Some(_), packed)) = read_logs(&mut redis_conn, &stream_read_id, &config) {
-            let unpacked = process_data(packed).unwrap_or(vec![error_log_item()]);
-            let records = extract_records(unpacked);
+        let raw_read = read_logs(&mut redis_conn, &stream_read_id, &config);
+        if let Ok(response) = raw_read {
+            if let (Some(_), packed) = response {
+                if packed.len() == 0 {
+                    continue;
+                }
+                let unpacked = process_data(packed).unwrap_or(vec![error_log_item()]);
+                let records = extract_records(unpacked);
 
-            for record in records {
-                if tx.send(record).is_err() {
-                    println!("Receiver dropped, stopping...");
-                    break 'main;
+                for record in records {
+                    if tx.send(record).is_err() {
+                        println!("Receiver dropped, stopping...");
+                        break 'main;
+                    }
+                }
+            }
+        } else {
+            println!("{:?}", raw_read);
+            redis_conn = loop {
+                {
+                    let new_conn = create_redis_conn(&config.url.full_url());
+                    if new_conn.is_err() {
+                        println!("Error reading from redis, retrying connection in 1s");
+                        thread::sleep(Duration::from_millis(1000));
+                    } else {
+                        println!("Reconnected");
+                        let mut conn = new_conn.unwrap();
+                        if check_connection(&mut conn, &config).is_err() {
+                            return;
+                        }
+                        break conn;
+                    }
                 }
             }
         }
