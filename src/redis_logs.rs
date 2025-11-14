@@ -218,8 +218,9 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &RedisConfig) {
                 )
             } else {
                 panic!(
-                    "Failed to create Redis consumer group {}!",
-                    &config.consumer_group
+                    "Failed to create Redis consumer group {}! Code: {:?}",
+                    &config.consumer_group,
+                    &error.code()
                 );
             }
         }
@@ -237,6 +238,14 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &RedisConfig) {
 
 pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: RedisConfig) {
     let mut redis_conn = redis_conn(&config.url.full_url()).expect("Could not connect to Redis!");
+    if let Ok(key_exists) = redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
+        if !key_exists {
+            println!("Logging endpoint doesn't exist, exiting.");
+            return;
+        }
+    } else {
+        panic!("Something went wrong checking the logs endpoint")
+    }
     let stream_read_id: String = ">".into();
     setup_consumer_group(&mut redis_conn, &config);
 
