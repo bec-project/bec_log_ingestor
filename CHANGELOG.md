@@ -1,3 +1,11 @@
+## [1.3.6](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.5...v1.3.6) (2025-11-14)
+
+
+### Bug Fixes
+
+* better logic for retrying redis connection ([dd36fa0](https://github.com/bec-project/bec_log_ingestor/commit/dd36fa063fa4605c7fc0b1b0e7eee51ddb5edaee))
+* check if redis logging endpoint exists ([05c31ed](https://github.com/bec-project/bec_log_ingestor/commit/05c31ed36bae307f5f095098ce33ae532023dab7))
+
 ## [1.3.5](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.4...v1.3.5) (2025-10-14)
 
 
