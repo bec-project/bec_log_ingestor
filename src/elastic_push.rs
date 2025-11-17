@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use std::{error::Error, iter::once};
 
-use crate::{config::ElasticConfig, redis_logs::LogMsg};
+use crate::{config::ElasticConfig, models::LogMsg};
 
 fn elastic_client(config: &ElasticConfig) -> Result<Elasticsearch, Box<dyn Error>> {
     let url = elasticsearch::http::Url::parse(&config.url.full_url())?;
@@ -83,7 +83,7 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Ela
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::UrlPort, redis_logs::LogRecord};
+    use crate::{config::UrlPort, models::LogRecord};
 
     use super::*;
     use serde::{Deserialize, Serialize};
@@ -100,18 +100,18 @@ mod tests {
                 service_name: "test_service".into(),
                 text: "...".into(),
                 record: LogRecord {
-                    elapsed: crate::redis_logs::Elapsed {
+                    elapsed: crate::models::Elapsed {
                         repr: "".into(),
                         seconds: 0.0,
                     },
                     exception: None,
                     extra: {}.into(),
-                    file: crate::redis_logs::File {
+                    file: crate::models::File {
                         name: "".into(),
                         path: "".into(),
                     },
                     function: "".into(),
-                    level: crate::redis_logs::LogLevel {
+                    level: crate::models::LogLevel {
                         icon: "".into(),
                         name: d.level,
                         no: 100,
@@ -120,15 +120,15 @@ mod tests {
                     message: d.msg,
                     module: "".into(),
                     name: "".into(),
-                    process: crate::redis_logs::NameId {
+                    process: crate::models::NameId {
                         name: "".into(),
                         id: 0,
                     },
-                    thread: crate::redis_logs::NameId {
+                    thread: crate::models::NameId {
                         name: "".into(),
                         id: 0,
                     },
-                    time: crate::redis_logs::Timestamp {
+                    time: crate::models::Timestamp {
                         repr: "".into(),
                         timestamp: 0.0,
                     },

@@ -2,8 +2,11 @@ use std::process::exit;
 
 use tokio::sync::mpsc;
 
+mod models;
+use crate::models::LogMsg;
+
 mod redis_logs;
-use crate::redis_logs::{LogMsg, producer_loop};
+use crate::redis_logs::producer_loop;
 
 mod elastic_push;
 use crate::elastic_push::consumer_loop;
