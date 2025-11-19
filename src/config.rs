@@ -1,6 +1,6 @@
 use std::{fmt, io::Read};
 
-use serde::Deserialize;
+use serde_derive::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UrlPort {
@@ -14,7 +14,7 @@ impl UrlPort {
     }
 }
 
-/// Default number of records to read from Redis or push to Elastic at once
+/// Default number of records to read from Redis or push to Loki at once
 fn default_chunk_size() -> u16 {
     100
 }
@@ -26,7 +26,7 @@ fn default_blocktime_millis() -> usize {
 fn default_consumer() -> String {
     "log-ingestor".into()
 }
-/// Default value for the elastic index
+/// Default value for the loki index
 fn default_index() -> String {
     "logstash-bec_test123".into()
 }
@@ -49,7 +49,7 @@ pub struct RedisConfig {
 }
 
 #[derive(Clone, Deserialize)]
-pub struct ElasticConfig {
+pub struct LokiConfig {
     pub url: UrlPort,
     pub api_key: Option<String>,
     pub username: Option<String>,
@@ -62,7 +62,7 @@ pub struct ElasticConfig {
     pub beamline_name: String,
 }
 
-impl fmt::Debug for ElasticConfig {
+impl fmt::Debug for LokiConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let auth_mode = {
             if self.api_key.is_some() {
@@ -85,29 +85,10 @@ impl fmt::Debug for ElasticConfig {
     }
 }
 
-impl ElasticConfig {
-    pub fn credentials(&self) -> Result<elasticsearch::auth::Credentials, &str> {
-        if let Some(api_key) = &self.api_key {
-            Ok(elasticsearch::auth::Credentials::EncodedApiKey(
-                api_key.into(),
-            ))
-        } else if let Some(username) = &self.username
-            && let Some(password) = &self.password
-        {
-            Ok(elasticsearch::auth::Credentials::Basic(
-                username.to_owned(),
-                password.to_owned(),
-            ))
-        } else {
-            Err("No credentials in config!")
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 pub struct IngestorConfig {
     pub redis: RedisConfig,
-    pub elastic: ElasticConfig,
+    pub loki: LokiConfig,
 }
 
 impl IngestorConfig {
@@ -153,17 +134,17 @@ port = 12345
 url = \"http://127.0.0.1\"
 port = 12345
 
-[elastic]
+[loki]
 api_key = \"abcdefgh==\"
 
-[elastic.url]
+[loki.url]
 url = \"http://127.0.0.1\"
 port = 9876
 ";
         let config: IngestorConfig = toml::from_str(&test_str).unwrap();
         assert_eq!(config.redis.url.full_url(), "http://127.0.0.1:12345");
-        assert_eq!(config.elastic.url.full_url(), "http://127.0.0.1:9876");
-        assert_eq!(config.elastic.api_key, Some("abcdefgh==".into()));
+        assert_eq!(config.loki.url.full_url(), "http://127.0.0.1:9876");
+        assert_eq!(config.loki.api_key, Some("abcdefgh==".into()));
     }
 
     #[test]
@@ -181,15 +162,15 @@ port = 6379
     }
 
     #[test]
-    fn test_elastic_defaults() {
+    fn test_loki_defaults() {
         let test_str = "
 url = { url = \"http://localhost\", port = 9200 }
 api_key = \"testkey\"
 ";
-        let elastic: ElasticConfig = toml::from_str(&test_str).unwrap();
-        assert_eq!(elastic.chunk_size, 100);
-        assert_eq!(elastic.api_key, Some("testkey".into()));
-        assert_eq!(elastic.url.full_url(), "http://localhost:9200");
+        let loki: LokiConfig = toml::from_str(&test_str).unwrap();
+        assert_eq!(loki.chunk_size, 100);
+        assert_eq!(loki.api_key, Some("testkey".into()));
+        assert_eq!(loki.url.full_url(), "http://localhost:9200");
     }
 
     #[test]

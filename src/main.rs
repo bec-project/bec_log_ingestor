@@ -8,8 +8,8 @@ use crate::models::LogMsg;
 mod redis_logs;
 use crate::redis_logs::producer_loop;
 
-mod elastic_push;
-use crate::elastic_push::consumer_loop;
+mod loki_push;
+use crate::loki_push::consumer_loop;
 
 mod config;
 use crate::config::IngestorConfig;
@@ -45,7 +45,7 @@ async fn main_loop(config: IngestorConfig) {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
     let producer = tokio::spawn(producer_loop(tx, config.redis.clone()));
-    consumer_loop(&mut rx, config.elastic.clone()).await;
+    consumer_loop(&mut rx, config.loki.clone()).await;
 
     let _ = tokio::join!(producer);
 }
