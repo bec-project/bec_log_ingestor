@@ -8,12 +8,18 @@ consumer_id = "log-ingestor"
 url = "redis://127.0.0.1"
 port = 6379
 
-[elastic]
-api_key = "RjhrMWY1Z0J4ZjV0T0NJQmIzdjU6ZjVURGdmWmVCM3I3ckd2ZmFLUXl6UQ=="
+[loki]
+url = "http://localhost"
+auth = { username = "test-loki", password = "test-loki-password" }
 chunk_size = 100
-index = "logstash-bec_test123"
 beamline_name = "x99xa"
 
-[elastic.url]
+[metrics]
+user_config_path = "./test/test_metrics_config.toml"
 url = "http://localhost"
-port = 9200
+auth = { username = "test-mimir", password = "test-mimir-password" }
+
+[metrics.intervals]
+new_metric = { Secondly = 53 }
+cpu_usage = { Secondly = 15 }
+ram_usage = { Secondly = 30 }

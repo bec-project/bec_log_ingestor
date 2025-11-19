@@ -2,7 +2,7 @@
 
 [![Linting](https://github.com/bec-project/bec_log_ingestor/actions/workflows/check-and-lint.yaml/badge.svg)](https://github.com/bec-project/bec_log_ingestor/actions/workflows/check-and-lint.yaml) [![codecov](https://codecov.io/gh/bec-project/bec_log_ingestor/graph/badge.svg?token=B7Mzj4EhzH)](https://codecov.io/gh/bec-project/bec_log_ingestor)
 
-Tiny service to pull BEC logs from Redis and push them to Elastic.
+Tiny service to pull BEC logs from Redis and push them to Loki.
 
 To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`.
 

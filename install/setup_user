@@ -2,6 +2,6 @@
 if id "bec_log_ingestor" &>/dev/null; then
     echo "User 'bec_log_ingestor' already exists."
 else
-    useradd -r -c 'BEC Logs Elasticsearch Ingestor' -d /var/lib/bec_log_ingestor -s /sbin/nologin bec_log_ingestor
+    useradd -r -c 'BEC Logs Loki Ingestor' -d /var/lib/bec_log_ingestor -s /sbin/nologin bec_log_ingestor
     echo "User 'bec_log_ingestor' created."
 fi

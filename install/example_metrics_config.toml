@@ -1,0 +1,3 @@
+[intervals]
+repo_git_status = { Minutely = 30 }
+cpu_usage = { Secondly = 30 }
