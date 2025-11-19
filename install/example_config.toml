@@ -8,12 +8,9 @@ consumer_id = "log-ingestor"
 url = "redis://127.0.0.1"
 port = 6379
 
-[elastic]
-api_key = "RjhrMWY1Z0J4ZjV0T0NJQmIzdjU6ZjVURGdmWmVCM3I3ckd2ZmFLUXl6UQ=="
+[loki]
+url = "http://localhost"
+auth = { username = "test-loki", password = "test-loki-password" }
 chunk_size = 100
-index = "logstash-bec_test123"
 beamline_name = "x99xa"
 
-[elastic.url]
-url = "http://localhost"
-port = 9200
