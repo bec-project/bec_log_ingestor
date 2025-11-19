@@ -1,5 +1,4 @@
-use chrono::TimeZone;
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 pub struct Elapsed {
@@ -30,9 +29,8 @@ pub struct Timestamp {
 }
 
 impl Timestamp {
-    pub fn as_rfc3339(&self) -> String {
-        let ts = chrono::Utc.timestamp_opt(self.timestamp as i64, 0).unwrap();
-        ts.to_rfc3339()
+    pub fn as_epoch_nanos(&self) -> String {
+        ((self.timestamp * 1_000_000.0) as i64).to_string()
     }
 }
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]

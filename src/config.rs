@@ -1,8 +1,22 @@
-use std::{fmt, io::Read};
+use std::{collections::HashMap, fmt, io::Read};
 
-use serde::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize)]
+pub trait FromTomlFile {
+    /// Parse a toml file for an IngestorConfig. Assumes the file exists and is readable.
+    fn from_file(path: std::path::PathBuf) -> Self
+    where
+        Self: for<'de> serde::Deserialize<'de>,
+    {
+        let mut file = std::fs::File::open(path).expect("Cannot open supplied config file!");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Cannot read supplied config file!");
+        let self_name = std::any::type_name::<Self>();
+        toml::from_str(&contents).expect(format!("Invalid TOML for {self_name} struct").as_str())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UrlPort {
     pub url: String,
     pub port: u16,
@@ -14,7 +28,20 @@ impl UrlPort {
     }
 }
 
-/// Default number of records to read from Redis or push to Elastic at once
+#[derive(Clone, Deserialize)]
+
+pub struct BasicAuth {
+    pub username: String,
+    pub password: String,
+}
+
+impl fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Basic auth: provided",)
+    }
+}
+
+/// Default number of records to read from Redis or push to Loki at once
 fn default_chunk_size() -> u16 {
     100
 }
@@ -25,10 +52,6 @@ fn default_blocktime_millis() -> usize {
 /// Default value for both the consumer group and consumer ID
 fn default_consumer() -> String {
     "log-ingestor".into()
-}
-/// Default value for the elastic index
-fn default_index() -> String {
-    "logstash-bec_test123".into()
 }
 /// Default value for the beamline name
 fn default_beamline_name() -> String {
@@ -48,77 +71,72 @@ pub struct RedisConfig {
     pub consumer_id: String,
 }
 
-#[derive(Clone, Deserialize)]
-pub struct ElasticConfig {
-    pub url: UrlPort,
-    pub api_key: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
+#[derive(Clone, Debug, Deserialize)]
+pub struct LokiConfig {
+    pub url: String,
+    pub auth: BasicAuth,
     #[serde(default = "default_chunk_size")]
     pub chunk_size: u16,
-    #[serde(default = "default_index")]
-    pub index: String,
     #[serde(default = "default_beamline_name")]
     pub beamline_name: String,
 }
 
-impl fmt::Debug for ElasticConfig {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let auth_mode = {
-            if self.api_key.is_some() {
-                "api key"
-            } else {
-                "basic auth"
-            }
-        };
-        write!(
-            f,
-            "{{
-    url: {:?}
-    auth mode: {:?}
-    chunk size: {:?}
-    index: {:?}
-    beamline: {:?}
-}}",
-            self.url, auth_mode, self.chunk_size, self.index, self.beamline_name
-        )
-    }
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum MetricInterval {
+    Secondly(i32),
+    Minutely(i32),
+    Hourly(i32),
+    Daily(i32),
+    Weekly(i32),
 }
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct MetricIntervalsConfig {
+    #[serde(default = "HashMap::new")]
+    pub intervals: HashMap<String, MetricInterval>,
+}
+impl FromTomlFile for MetricIntervalsConfig {}
 
-impl ElasticConfig {
-    pub fn credentials(&self) -> Result<elasticsearch::auth::Credentials, &str> {
-        if let Some(api_key) = &self.api_key {
-            Ok(elasticsearch::auth::Credentials::EncodedApiKey(
-                api_key.into(),
-            ))
-        } else if let Some(username) = &self.username
-            && let Some(password) = &self.password
-        {
-            Ok(elasticsearch::auth::Credentials::Basic(
-                username.to_owned(),
-                password.to_owned(),
-            ))
-        } else {
-            Err("No credentials in config!")
-        }
-    }
+#[derive(Clone, Debug, Deserialize)]
+pub struct MetricsConfig {
+    pub user_config_path: Option<std::path::PathBuf>,
+    pub auth: BasicAuth,
+    pub url: String,
+    #[serde(default = "HashMap::new")]
+    pub intervals: HashMap<String, MetricInterval>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct IngestorConfig {
     pub redis: RedisConfig,
-    pub elastic: ElasticConfig,
+    pub loki: LokiConfig,
+    pub metrics: MetricsConfig,
 }
+impl FromTomlFile for IngestorConfig {}
 
-impl IngestorConfig {
-    /// Parse a toml file for an IngestorConfig. Assumes the file exists and is readable.
-    pub fn from_file(path: std::path::PathBuf) -> Self {
-        let mut file = std::fs::File::open(path).expect("Cannot open supplied config file!");
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .expect("Cannot read supplied config file!");
-        toml::from_str(&contents).unwrap()
+/// Assemble a full IngestorConfig from the paths from commandline arguments
+/// The path for the main config must be supplied.
+///
+/// Metric interval configuration can be supplied in three places, in decreasing order of preference:
+/// - in a file with the commandline -m flag
+/// - in a file referenced as `metrics.user_config_path` in the main config file
+/// - directly under [metrics.intervals] in the main config file
+///
+/// The file referenced in the main config doesn't have to exist, if not, it will be ignored
+pub fn assemble_config(paths: (std::path::PathBuf, Option<std::path::PathBuf>)) -> IngestorConfig {
+    let (path, metrics_path) = paths;
+    let mut config = IngestorConfig::from_file(path);
+    if let Some(ref intervals_reference_file) = config.metrics.user_config_path {
+        if intervals_reference_file.exists() {
+            let intervals = MetricIntervalsConfig::from_file(intervals_reference_file.clone());
+            config.metrics.intervals.extend(intervals.intervals);
+        } else {
+            println!("Metric intervals config file not found at {intervals_reference_file:?}")
+        }
     }
+    if let Some(intervals) = metrics_path.map(MetricIntervalsConfig::from_file) {
+        config.metrics.intervals.extend(intervals.intervals);
+    }
+    config
 }
 
 #[cfg(test)]
@@ -153,17 +171,19 @@ port = 12345
 url = \"http://127.0.0.1\"
 port = 12345
 
-[elastic]
-api_key = \"abcdefgh==\"
+[loki]
+auth = { username = \"test_user\", password = \"test_password\" }
+url = \"http://127.0.0.1/api/v1/push\"
 
-[elastic.url]
+[metrics]
+auth = { username = \"test_user\", password = \"test_password\" }
 url = \"http://127.0.0.1\"
-port = 9876
 ";
         let config: IngestorConfig = toml::from_str(&test_str).unwrap();
         assert_eq!(config.redis.url.full_url(), "http://127.0.0.1:12345");
-        assert_eq!(config.elastic.url.full_url(), "http://127.0.0.1:9876");
-        assert_eq!(config.elastic.api_key, Some("abcdefgh==".into()));
+        assert_eq!(config.loki.url, "http://127.0.0.1/api/v1/push");
+        assert_eq!(config.loki.auth.username, "test_user");
+        assert_eq!(config.loki.auth.password, "test_password");
     }
 
     #[test]
@@ -178,18 +198,6 @@ port = 6379
         assert_eq!(redis.blocktime_millis, 1000);
         assert_eq!(redis.consumer_group, "log-ingestor");
         assert_eq!(redis.consumer_id, "log-ingestor");
-    }
-
-    #[test]
-    fn test_elastic_defaults() {
-        let test_str = "
-url = { url = \"http://localhost\", port = 9200 }
-api_key = \"testkey\"
-";
-        let elastic: ElasticConfig = toml::from_str(&test_str).unwrap();
-        assert_eq!(elastic.chunk_size, 100);
-        assert_eq!(elastic.api_key, Some("testkey".into()));
-        assert_eq!(elastic.url.full_url(), "http://localhost:9200");
     }
 
     #[test]
@@ -218,5 +226,68 @@ this is not toml
             IngestorConfig::from_file(path);
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_file_success() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("./install/example_config.toml");
+        let config = IngestorConfig::from_file(path);
+        assert_eq!(config.loki.auth.password, "test-loki-password");
+        assert_eq!(config.loki.auth.username, "test-loki");
+    }
+
+    #[test]
+    fn test_assembled_from_file_success() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("./install/example_config.toml");
+        let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
+        let config = assemble_config((path, Some(metrics_path)));
+        assert_eq!(config.loki.auth.password, "test-loki-password");
+        assert_eq!(config.loki.auth.username, "test-loki");
+        assert_eq!(config.metrics.intervals.len(), 4);
+    }
+
+    #[test]
+    fn test_assembled_from_file_preference_order() {
+        use std::path::PathBuf;
+        let path = PathBuf::from("./install/example_config.toml");
+        let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
+        let config = assemble_config((path, Some(metrics_path)));
+        assert_eq!(config.loki.auth.password, "test-loki-password");
+        assert_eq!(config.loki.auth.username, "test-loki");
+        assert_eq!(config.metrics.intervals.len(), 4);
+        assert_eq!(
+            config.metrics.intervals.get("cpu_usage"),
+            Some(&MetricInterval::Secondly(30)) // from commandline arg
+        );
+        assert_eq!(
+            config.metrics.intervals.get("ram_usage"),
+            Some(&MetricInterval::Secondly(75)) // from referenced file
+        );
+        assert_eq!(
+            config.metrics.intervals.get("new_metric"),
+            Some(&MetricInterval::Secondly(53)) // from direct config file
+        );
+    }
+
+    #[test]
+    fn test_interval_parse() {
+        let test_str = "
+url = \"http://localhost\"
+
+[intervals]
+metric_1 = { Weekly = 1 }
+metric_2 = { Secondly = 10 }
+        ";
+        let intervals: MetricIntervalsConfig = toml::from_str(&test_str).unwrap();
+        println!("{intervals:?}");
+        assert_eq!(
+            intervals.intervals,
+            HashMap::from([
+                ("metric_1".into(), MetricInterval::Weekly(1)),
+                ("metric_2".into(), MetricInterval::Secondly(10)),
+            ])
+        );
     }
 }

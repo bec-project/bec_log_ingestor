@@ -134,7 +134,7 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: RedisConfi
         let raw_read = read_logs(&mut redis_conn, &stream_read_id, &config);
         if let Ok(response) = raw_read {
             if let (Some(_), packed) = response {
-                if packed.len() == 0 {
+                if packed.is_empty() {
                     continue;
                 }
                 let unpacked = process_data(packed).unwrap_or(vec![error_log_item()]);
