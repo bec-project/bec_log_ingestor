@@ -1,4 +1,5 @@
 [intervals]
 repo_git_status = { Minutely = 10 }
-cpu_usage = { Secondly = 20 }
-ram_usage = { Secondly = 75 }
+cpu_usage_percent = { Secondly = 3 }
+ram_usage_bytes = { Secondly = 15 }
+ram_available_bytes = { Secondly = 15 }
