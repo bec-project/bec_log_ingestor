@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.6...v1.4.0) (2025-12-05)
+
+
+### Features
+
+* replace elastic with loki ([cffcc60](https://github.com/bec-project/bec_log_ingestor/commit/cffcc60cc0cabdfffa6f99b27acdb0d52c6e9ad1))
+
 ## [1.3.6](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.5...v1.3.6) (2025-11-14)
 
 
