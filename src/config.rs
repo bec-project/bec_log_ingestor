@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, io::Read};
+use std::{collections::HashMap, fmt, io::Read, time::Duration};
 
 use serde_derive::{Deserialize, Serialize};
 
@@ -16,6 +16,7 @@ pub trait FromTomlFile {
         toml::from_str(&contents).expect(format!("Invalid TOML for {self_name} struct").as_str())
     }
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UrlPort {
     pub url: String,
@@ -83,11 +84,11 @@ pub struct LokiConfig {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum MetricInterval {
-    Secondly(i32),
-    Minutely(i32),
-    Hourly(i32),
-    Daily(i32),
-    Weekly(i32),
+    Secondly(u64),
+    Minutely(u64),
+    Hourly(u64),
+    Daily(u64),
+    Weekly(u64),
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct MetricIntervalsConfig {
@@ -96,13 +97,35 @@ pub struct MetricIntervalsConfig {
 }
 impl FromTomlFile for MetricIntervalsConfig {}
 
-#[derive(Clone, Debug, Deserialize)]
+impl Into<tokio::time::Interval> for &MetricInterval {
+    fn into(self) -> tokio::time::Interval {
+        match self {
+            MetricInterval::Secondly(n) => tokio::time::interval(Duration::from_secs(*n)),
+            MetricInterval::Minutely(n) => tokio::time::interval(Duration::from_secs(n * 60)),
+            MetricInterval::Hourly(n) => tokio::time::interval(Duration::from_secs(n * 3600)),
+            MetricInterval::Daily(n) => tokio::time::interval(Duration::from_secs(n * 86400)),
+            MetricInterval::Weekly(n) => tokio::time::interval(Duration::from_secs(n * 604800)),
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, Debug)]
 pub struct MetricsConfig {
     pub user_config_path: Option<std::path::PathBuf>,
     pub auth: BasicAuth,
     pub url: String,
     #[serde(default = "HashMap::new")]
     pub intervals: HashMap<String, MetricInterval>,
+}
+
+impl MetricsConfig {
+    /// Get an interval future for `metric_name`, defaults to one minute if unconfigured.
+    pub fn interval_for_metric(&self, metric_name: &String) -> tokio::time::Interval {
+        match self.intervals.get(metric_name) {
+            None => tokio::time::interval(Duration::from_secs(60)),
+            Some(int) => int.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
