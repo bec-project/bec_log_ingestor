@@ -1,5 +1,5 @@
 use crate::{
-    config::{MetricsConfig, RedisConfig},
+    config::{IngestorConfig, MetricsConfig, RedisConfig},
     redis_logs::create_redis_conn,
 };
 use futures::future::join_all;
@@ -10,7 +10,7 @@ use tokio::{
     spawn,
     sync::mpsc::{self, UnboundedSender},
     task::JoinHandle,
-    time,
+    time, try_join,
 };
 
 type SimpleMetricFunc = Box<dyn Fn() -> String + Send + Sync>;
@@ -24,6 +24,7 @@ enum MetricFunc {
     System(SysinfoMetricFunc),
 }
 
+/// Create a future for a given metric function.
 async fn metric_future(
     name: String,
     metric_func: MetricFunc,
@@ -33,7 +34,7 @@ async fn metric_future(
 ) {
     match metric_func {
         MetricFunc::Simple(ref func) => loop {
-            if tx.send(("".into(), func())).is_err() {
+            if tx.send((name.to_owned(), func())).is_err() {
                 break;
             }
         },
@@ -41,7 +42,7 @@ async fn metric_future(
             let mut redis = create_redis_conn(&redis_config.url.full_url())
                 .expect("Could not connect to Redis!");
             loop {
-                if tx.send(("".into(), func(&mut redis))).is_err() {
+                if tx.send((name.to_owned(), func(&mut redis))).is_err() {
                     break;
                 }
             }
@@ -50,7 +51,7 @@ async fn metric_future(
             let system = System::new_all();
             loop {
                 interval.tick().await;
-                if tx.send(("".into(), func(&system))).is_err() {
+                if tx.send((name.to_owned(), func(&system))).is_err() {
                     break;
                 }
             }
@@ -58,6 +59,15 @@ async fn metric_future(
     };
 }
 
+// Macros create a hashmap entry from a conforming function
+macro_rules! simple_metric {
+    ($func:expr) => {
+        (
+            stringify!($func).to_string(),
+            $crate::metrics::Simple(Box::new($func) as $crate::metrics::SimpleMetricFunc),
+        )
+    };
+}
 macro_rules! system_metric {
     ($func:expr) => {
         (
@@ -76,6 +86,7 @@ macro_rules! redis_metric {
         )
     };
 }
+
 // System info metrics
 fn cpu_usage_percent(system: &System) -> String {
     system.global_cpu_usage().to_string()
@@ -96,7 +107,42 @@ fn redis_metric_1(redis: &mut Connection) -> String {
     }
 }
 
-pub async fn metrics_loop(config: MetricsConfig, redis_config: RedisConfig) {
+pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<MetricUpdate>, config: MetricsConfig) {
+    let chunk_size = 100;
+    let mut buffer: Vec<MetricUpdate> = Vec::with_capacity(chunk_size);
+    let client = reqwest::Client::new();
+
+    loop {
+        let open = rx.recv_many(&mut buffer, chunk_size).await;
+        if open == 0 {
+            break;
+        }
+        match client
+            .post(&config.url)
+            .basic_auth(&config.auth.username, Some(&config.auth.password))
+            .send()
+            .await
+        {
+            Ok(res) => {
+                println!("Sent {open} metrics to Mimir.");
+                if !res.status().is_success() {
+                    let text = res
+                        .text()
+                        .await
+                        .unwrap_or("[Unable to decode response text!]".into());
+                    println!("Received error response: {text} ");
+                }
+            }
+            Err(res) => {
+                println!("ERROR: {res:?}");
+            }
+        };
+        buffer.clear();
+    }
+    println!("Producer dropped, consumer exiting");
+}
+
+pub async fn metrics_loop(config: IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<MetricUpdate>();
 
     let metrics: HashMap<String, MetricFunc> = HashMap::from([
@@ -111,18 +157,20 @@ pub async fn metrics_loop(config: MetricsConfig, redis_config: RedisConfig) {
     let futs: Vec<JoinHandle<()>> = metrics
         .into_iter()
         .map(|(name, func)| {
-            let interval = config.interval_for_metric(&name);
+            let interval = config.metrics.interval_for_metric(&name);
             spawn(metric_future(
                 name,
                 func,
                 interval,
-                redis_config.clone(),
+                config.redis.clone(),
                 tx.clone(),
             ))
         })
         .collect();
 
-    join_all(futs).await;
+    let metric_futs = join_all(futs);
+    consumer_loop(&mut rx, config.metrics.clone()).await;
+    // try_join!(metric_futs);
 }
 
 #[cfg(test)]
