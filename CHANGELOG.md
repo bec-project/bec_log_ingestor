@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.4.0...v1.4.1) (2025-12-09)
+
+
+### Bug Fixes
+
+* loki json format ([22d1057](https://github.com/bec-project/bec_log_ingestor/commit/22d105727b7aa65e2f6d05ac7438c9b7f4841ad0))
+
 # [1.4.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.3.6...v1.4.0) (2025-12-05)
 
 
