@@ -22,7 +22,7 @@ pre_install_script_flags = 0b100
 chrono = "0.4.42"
 clap = { version = "4.5.52", features = ["derive"] }
 redis = "0.32.7"
-reqwest = "0.12.24"
+reqwest = { version = "0.12.24", features = ["json"] }
 rmp-serde = "1.3.0"
 serde = "1.0.228"
 serde_derive = "1.0.228"

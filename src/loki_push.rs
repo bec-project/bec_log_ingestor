@@ -3,48 +3,41 @@ use tokio::sync::mpsc;
 use crate::{config::LokiConfig, models::LogMsg};
 
 /// Convert a LogRecord to the document we want Loki to ingest
-fn json_from_logmsg(
-    msg: &LogMsg,
-    config: &LokiConfig,
-) -> Result<serde_json::Value, serde_json::Error> {
-    Ok(serde_json::json!([
-            msg.record.time.as_epoch_nanos(),
-            msg.record.line,
-            {
-                "file_name": msg.record.file.name,
-                "file_location": msg.record.file.path,
-                "function": msg.record.function,
-                "message": msg.record.message,
-                "log_type": msg.record.level.name,
-                "module": msg.record.module,
-                "service_name": msg.service_name,
-                "beamline_name": config.beamline_name,
-                "proc_id": msg.record.process.id,
-                "exception": msg.record.exception,
-            }
-        ]
-    ))
+fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> serde_json::Value {
+    serde_json::json!([
+        msg.record.time.as_epoch_nanos(),
+        msg.record.message,
+        {
+            "file_name": msg.record.file.name,
+            "file_location": msg.record.file.path,
+            "function": msg.record.function,
+            "line": msg.record.line.to_string(),
+            "log_type": msg.record.level.name,
+            "module": msg.record.module,
+            "service_name": msg.service_name,
+            "beamline_name": config.beamline_name,
+            "proc_id": msg.record.process.id.to_string(),
+            "exception": msg.record.exception.clone().unwrap_or("None".into())
+        }
+    ])
 }
 
-fn make_json_body(
-    msgs: &[LogMsg],
-    config: &LokiConfig,
-) -> Result<serde_json::Value, serde_json::Error> {
+fn make_json_body(msgs: &[LogMsg], config: &LokiConfig) -> serde_json::Value {
     let values = msgs
         .iter()
         .map(|e| json_from_logmsg(e, config))
-        .collect::<Result<Vec<serde_json::Value>, serde_json::Error>>()?;
+        .collect::<Vec<serde_json::Value>>();
 
-    Ok(serde_json::json!({
+    serde_json::json!({
         "streams" : [
             {
                 "stream" :{
-                    "label": "bec_logs"
+                    "label": format!("bec_logs_{}", config.beamline_name)
                 },
                 "values": values
             }
         ]
-    }))
+    })
 }
 
 pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: LokiConfig) {
@@ -56,11 +49,12 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Lok
         if open == 0 {
             break;
         }
-        let body = make_json_body(&buffer, &config).unwrap_or(serde_json::json!([]));
+        let body = make_json_body(&buffer, &config).to_string();
         match client
             .post(&config.url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
             .basic_auth(&config.auth.username, Some(&config.auth.password))
-            .body(body.to_string())
+            .body(body)
             .send()
             .await
         {
@@ -152,10 +146,10 @@ auth = { username = \"test_user\", password = \"test_password\" }
     #[test]
     fn test_make_docs_values_empty() {
         let records: Vec<LogMsg> = vec![];
-        let docs = make_json_body(&records, &loki_config()).unwrap();
+        let docs = make_json_body(&records, &loki_config());
         assert_eq!(
             docs.to_string(),
-            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs\"},\"values\":[]}]}"
+            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[]}]}"
         );
     }
 
@@ -166,11 +160,11 @@ auth = { username = \"test_user\", password = \"test_password\" }
             level: "info".to_string(),
         }
         .into();
-        let docs = make_json_body(&vec![record.clone()], &loki_config()).unwrap();
+        let docs = make_json_body(&vec![record.clone()], &loki_config());
         // Each record should produce two JSON bodies (action + doc)
         assert_eq!(
             docs.to_string(),
-            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs\"},\"values\":[[\"0\",0,{\"beamline_name\":\"x99xa\",\"exception\":null,\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"log_type\":\"info\",\"message\":\"hello\",\"module\":\"\",\"proc_id\":0,\"service_name\":\"test_service\"}]]}]}"
+            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[[\"0\",\"hello\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"info\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}]]}]}"
         );
     }
 
@@ -186,10 +180,10 @@ auth = { username = \"test_user\", password = \"test_password\" }
             level: "warn".to_string(),
         }
         .into();
-        let docs = make_json_body(&vec![record1, record2], &loki_config()).unwrap();
+        let docs = make_json_body(&vec![record1, record2], &loki_config());
         assert_eq!(
             docs.to_string(),
-            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs\"},\"values\":[[\"0\",0,{\"beamline_name\":\"x99xa\",\"exception\":null,\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"log_type\":\"info\",\"message\":\"a\",\"module\":\"\",\"proc_id\":0,\"service_name\":\"test_service\"}],[\"0\",0,{\"beamline_name\":\"x99xa\",\"exception\":null,\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"log_type\":\"warn\",\"message\":\"b\",\"module\":\"\",\"proc_id\":0,\"service_name\":\"test_service\"}]]}]}"
+            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[[\"0\",\"a\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"info\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}],[\"0\",\"b\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"warn\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}]]}]}"
         );
     }
 }
