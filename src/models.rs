@@ -30,13 +30,13 @@ pub struct Timestamp {
 
 impl Timestamp {
     pub fn as_epoch_nanos(&self) -> String {
-        ((self.timestamp * 1_000_000.0) as i64).to_string()
+        ((self.timestamp * 1_000_000_000.0) as i64).to_string()
     }
 }
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 pub struct LogRecord {
     pub elapsed: Elapsed,
-    pub exception: Option<serde_json::Value>,
+    pub exception: Option<String>,
     pub extra: serde_json::Value,
     pub file: File,
     pub function: String,
