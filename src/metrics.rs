@@ -10,13 +10,16 @@ use tokio::{
     spawn,
     sync::mpsc::{self, UnboundedSender},
     task::JoinHandle,
-    time, try_join,
+    time,
 };
 
-type SimpleMetricFunc = Box<dyn Fn() -> String + Send + Sync>;
-type SysinfoMetricFunc = Box<dyn Fn(&System) -> String + Send + Sync>;
-type RedisMetricFunc = Box<dyn Fn(&mut Connection) -> String + Send + Sync>;
-type MetricUpdate = (String, String);
+pub mod prometheus {
+    include!(concat!(env!("OUT_DIR"), "/prometheus.rs"));
+}
+use prometheus::{TimeSeries, WriteRequest};
+type SimpleMetricFunc = Box<dyn Fn() -> TimeSeries + Send + Sync>;
+type SysinfoMetricFunc = Box<dyn Fn(&System) -> TimeSeries + Send + Sync>;
+type RedisMetricFunc = Box<dyn Fn(&mut Connection) -> TimeSeries + Send + Sync>;
 
 enum MetricFunc {
     Simple(SimpleMetricFunc),
@@ -26,15 +29,14 @@ enum MetricFunc {
 
 /// Create a future for a given metric function.
 async fn metric_future(
-    name: String,
     metric_func: MetricFunc,
     mut interval: time::Interval,
     redis_config: RedisConfig,
-    tx: UnboundedSender<MetricUpdate>,
+    tx: UnboundedSender<TimeSeries>,
 ) {
     match metric_func {
         MetricFunc::Simple(ref func) => loop {
-            if tx.send((name.to_owned(), func())).is_err() {
+            if tx.send((func())).is_err() {
                 break;
             }
         },
@@ -42,7 +44,7 @@ async fn metric_future(
             let mut redis = create_redis_conn(&redis_config.url.full_url())
                 .expect("Could not connect to Redis!");
             loop {
-                if tx.send((name.to_owned(), func(&mut redis))).is_err() {
+                if tx.send((func(&mut redis))).is_err() {
                     break;
                 }
             }
@@ -51,7 +53,7 @@ async fn metric_future(
             let system = System::new_all();
             loop {
                 interval.tick().await;
-                if tx.send((name.to_owned(), func(&system))).is_err() {
+                if tx.send((func(&system))).is_err() {
                     break;
                 }
             }
@@ -88,23 +90,37 @@ macro_rules! redis_metric {
 }
 
 // System info metrics
-fn cpu_usage_percent(system: &System) -> String {
+fn cpu_usage_percent(system: &System) -> TimeSeries {
     system.global_cpu_usage().to_string()
 }
-fn ram_usage_bytes(system: &System) -> String {
+fn ram_usage_bytes(system: &System) -> TimeSeries {
     system.used_memory().to_string()
 }
-fn ram_available_bytes(system: &System) -> String {
+fn ram_available_bytes(system: &System) -> TimeSeries {
     system.available_memory().to_string()
 }
 
 // Metrics from redis
-fn redis_metric_1(redis: &mut Connection) -> String {
+fn redis_metric_1(redis: &mut Connection) -> TimeSeries {
     if let Ok(res) = redis.get::<&str, String>("key") {
         res
     } else {
         "ERROR".into()
     }
+}
+
+fn sort_updates(updates: Vec<TimeSeries>) -> WriteRequest {
+    let mut map: HashMap<String, Vec<TimeSeries>> = HashMap::new();
+
+    for item in updates {
+        map.entry(item.0.clone()).or_default().push(item);
+    }
+
+    map.into_values().collect()
+}
+
+fn compile_message(updates: Vec<MetricUpdate>) -> prometheus::WriteRequest {
+    todo!()
 }
 
 pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<MetricUpdate>, config: MetricsConfig) {
