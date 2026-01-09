@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.4.1...v1.4.2) (2026-01-09)
+
+
+### Bug Fixes
+
+* restart systemd service in RPM post-install hook ([fe0a64d](https://github.com/bec-project/bec_log_ingestor/commit/fe0a64d5b7157b3d3ed6b424d70be4f85f059d5e))
+
 ## [1.4.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.4.0...v1.4.1) (2025-12-09)
 
 
