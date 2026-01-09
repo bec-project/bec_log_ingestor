@@ -13,7 +13,7 @@ fn str_error(err: &str) -> Box<dyn Error> {
     Box::<dyn Error>::from(err)
 }
 
-fn create_redis_conn(url: &str) -> Result<redis::Connection, redis::RedisError> {
+pub fn create_redis_conn(url: &str) -> Result<redis::Connection, redis::RedisError> {
     let client = redis::Client::open(url)?;
     client.get_connection()
 }
