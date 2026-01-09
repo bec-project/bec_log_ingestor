@@ -45,12 +45,15 @@ macro_rules! transmit_metric_loop {
         loop {
             $interval.tick().await;
             let (sample, opt_extra_labels) = $func($($args),*);
+            let mut owned_labels = $labels;
+            dbg!(&opt_extra_labels);
             if let Some(extra_labels) = opt_extra_labels {
-                $labels.extend(extra_labels);
+                owned_labels.extend(extra_labels);
+                dbg!(&owned_labels);
             }
             if $tx
                 .send(dbg!(TimeSeries {
-                    labels: labels_from_hashmap(&$labels),
+                    labels: labels_from_hashmap(&owned_labels),
                     samples: vec![sample],
                 }))
                 .is_err()
