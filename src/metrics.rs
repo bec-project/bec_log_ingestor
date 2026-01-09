@@ -1,154 +1,133 @@
 use crate::{
-    config::{IngestorConfig, MetricsConfig, RedisConfig},
-    metrics::prometheus::Label,
-    redis_logs::create_redis_conn,
+    config::{IngestorConfig, MetricsConfig},
+    metrics_core::{
+        MetricFunc, MetricFuncResult, MetricLabels, metric_future,
+        prometheus::{TimeSeries, WriteRequest},
+        sample_now,
+    },
+    simple_metric, system_metric,
 };
 
 use prost::Message;
-use redis::Connection;
 use snap::raw::Encoder;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
 use tokio::{
     spawn,
-    sync::mpsc::{self, UnboundedSender},
+    sync::{
+        Mutex,
+        mpsc::{self, UnboundedSender},
+    },
     task::JoinHandle,
-    time,
 };
-
-pub mod prometheus {
-    include!(concat!(env!("OUT_DIR"), "/prometheus.rs"));
-}
-use prometheus::{Sample, TimeSeries, WriteRequest};
-
-type SimpleMetricFunc = Box<dyn Fn() -> Sample + Send + Sync>;
-type SysinfoMetricFunc = Box<dyn Fn(&mut System) -> Sample + Send + Sync>;
-type RedisMetricFunc = Box<dyn Fn(&mut Connection) -> Sample + Send + Sync>;
-type MetricLabels = HashMap<String, String>;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-enum MetricFunc {
-    Simple(SimpleMetricFunc),
-    Redis(RedisMetricFunc),
-    System(SysinfoMetricFunc),
-}
+type MetricDefinition = (MetricFunc, MetricLabels);
+type MetricDefinitions = Arc<HashMap<String, MetricDefinition>>;
+type MetricFutures = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
 
-fn get_timestamp() -> i64 {
-    let ts = chrono::Utc::now().timestamp_millis();
-    dbg!(ts)
-}
-
-fn sample_now(value: f64) -> Sample {
-    println!("sample_now called with {value}");
-    Sample {
-        timestamp: get_timestamp(),
-        value,
+fn metric_spawner(
+    tx: UnboundedSender<TimeSeries>,
+    config: IngestorConfig,
+) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
+    move |(name, (func, labels))| {
+        (
+            name.clone(),
+            spawn(metric_future(
+                func.clone(),
+                labels.clone(),
+                config.metrics.interval_for_metric(&name),
+                config.redis.clone(),
+                tx.clone(),
+            )),
+        )
     }
 }
-fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
-    labels
-        .iter()
-        .map(|(k, v)| Label {
-            name: k.into(),
-            value: v.into(),
-        })
-        .collect()
-}
-macro_rules! transmit_metric_loop {
-    ($func:expr, ($($args:expr),*), $interval:expr, $tx:expr, $labels:expr) => {
-        loop {
-            $interval.tick().await;
-            println!("loop iterated");
-            let sample = vec![dbg!($func($($args),*))];
-            if $tx
-                .send(dbg!(TimeSeries {
-                    labels: labels_from_hashmap(&$labels),
-                    samples: sample,
-                }))
-                .is_err()
-            {
-                break;
-            }
-        }
-    };
-}
 
-/// Create a future for a given metric function.
-async fn metric_future(
-    metric_func: MetricFunc,
-    labels: HashMap<String, String>,
-    mut interval: time::Interval,
-    redis_config: RedisConfig,
-    tx: UnboundedSender<TimeSeries>,
-) {
-    match metric_func {
-        MetricFunc::Simple(ref func) => transmit_metric_loop!(func, (), interval, tx, labels),
-        MetricFunc::Redis(ref func) => {
-            let mut redis = create_redis_conn(&redis_config.url.full_url())
-                .expect("Could not connect to Redis!");
-            transmit_metric_loop!(func, (&mut redis), interval, tx, labels)
-        }
-        MetricFunc::System(ref func) => {
-            let mut system = System::new_all();
-            transmit_metric_loop!(func, (&mut system), interval, tx, labels)
-        }
-    };
-}
+//
+// METRIC FUNCTION DEFINITIONS
+//
+// Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 
-// Macros create a hashmap entry (name, (func, labels)) from a conforming function
-// These can be simplified to a nested macro when the feature is stabilized: https://github.com/rust-lang/rust/issues/83527
-macro_rules! simple_metric {
-    ($func:expr, [ $(($label_k:expr, $label_v:expr)),*]) => {
-        (
-            stringify!($func).to_string(),
-            (
-                $crate::metrics::Simple(Box::new($func) as $crate::metrics::SimpleMetricFunc),
-                std::collections::HashMap::from([$(($label_k.into(), $label_v.into())),*]),
-            )
-        )
-    };
-}
-macro_rules! system_metric {
-    ($func:expr, [ $(($label_k:expr, $label_v:expr)),*]) => {
-        (
-            stringify!($func).to_string(),
-            (
-                $crate::metrics::MetricFunc::System(Box::new($func) as $crate::metrics::SysinfoMetricFunc),
-                std::collections::HashMap::from([$(($label_k.into(), $label_v.into())),*]),
-            ),
-        )
-    };
-}
-macro_rules! redis_metric {
-    ($func:expr, [ $(($label_k:expr, $label_v:expr)),*]) => {
-        (
-            stringify!($func).to_string(),
-            (
-                $crate::metrics::MetricFunc::Redis(Box::new($func) as $crate::metrics::RedisMetricFunc),
-                std::collections::HashMap::from([$(($label_k.into(), $label_v.into())),*]),
-            )
-        )
-    };
-}
-
-fn heartbeat() -> Sample {
-    sample_now(1.into())
+fn deployment() -> MetricFuncResult {
+    let bec_version = String::from("1.2.3");
+    let extra_labels: MetricLabels = HashMap::from([("bec_version".into(), bec_version)]);
+    (sample_now(1.into()), Some(extra_labels))
 }
 
 // System info metrics
-fn cpu_usage_percent(system: &mut System) -> Sample {
+fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    sample_now(system.global_cpu_usage().into())
+    (sample_now(system.global_cpu_usage().into()), None)
 }
-fn ram_usage_bytes(system: &mut System) -> Sample {
-    sample_now(system.used_memory() as f64)
+fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
+    (sample_now(system.used_memory() as f64), None)
 }
-fn ram_available_bytes(system: &mut System) -> Sample {
-    sample_now(system.available_memory() as f64)
+fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
+    (sample_now(system.available_memory() as f64), None)
 }
 
-pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: MetricsConfig) {
+/// Defines the list of all metrics to run
+fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
+    Arc::new(HashMap::from([
+        // Custom/simple metrics
+        simple_metric!(deployment, [("beamline", &config.loki.beamline_name)]),
+        // System info metrics
+        system_metric!(
+            cpu_usage_percent,
+            [("beamline", &config.loki.beamline_name)]
+        ),
+        system_metric!(ram_usage_bytes, [("beamline", &config.loki.beamline_name)]),
+        system_metric!(
+            ram_available_bytes,
+            [("beamline", &config.loki.beamline_name)]
+        ),
+    ]))
+}
+
+//
+// ROUTINES TO PROCESS METRICS
+//
+
+/// Checks the running futures for any that have failed and attempts to restart them, once per minute.
+async fn watchdog_loop(
+    futs: MetricFutures,
+    metrics: MetricDefinitions,
+    tx: UnboundedSender<TimeSeries>,
+    config: IngestorConfig,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let mut spawner = metric_spawner(tx.clone(), config.clone());
+
+    loop {
+        interval.tick().await;
+
+        let finished: Vec<String> = {
+            futs.lock()
+                .await
+                .iter()
+                .filter(|(_, fut)| fut.is_finished())
+                .map(|(name, _)| name.clone())
+                .collect()
+        };
+
+        if !finished.is_empty() {
+            println!(
+                "ERROR: The following metric coroutines have crashed, retarting them: {finished:?}",
+            );
+            for name in finished {
+                if let Some((func, labels)) = metrics.get(&name) {
+                    let (_, handle) = spawner((&name, &(func.clone(), labels.clone())));
+                    futs.lock().await.insert(name, handle);
+                }
+            }
+        }
+    }
+}
+
+/// Consumes any metrics passed into the channel and encodes them in a Prometheus WriteRequest
+async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: MetricsConfig) {
     let chunk_size = 100;
     let mut buffer: Vec<TimeSeries> = Vec::with_capacity(chunk_size);
     let mut proto_encoded_buffer: Vec<u8> = Vec::new();
@@ -163,8 +142,6 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config:
         let write_request = WriteRequest {
             timeseries: buffer.clone(),
         };
-        dbg!(&write_request.timeseries);
-
         proto_encoded_buffer.reserve(write_request.encoded_len());
         let Ok(()) = write_request.encode(&mut proto_encoded_buffer) else {
             println!("ERROR: encountered an error in protobuf encoding. Exiting.");
@@ -205,68 +182,26 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config:
     println!("Producer dropped, consumer exiting");
 }
 
+/// Main routine to start the metrics service
 pub async fn metrics_loop(config: IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
 
-    let metrics: HashMap<String, (MetricFunc, MetricLabels)> = HashMap::from([
-        // System info metrics
-        system_metric!(
-            cpu_usage_percent,
-            [
-                ("__name__", "cpu_usage_percent"),
-                ("beamline", &config.loki.beamline_name)
-            ]
-        ),
-        system_metric!(
-            ram_usage_bytes,
-            [
-                ("__name__", "ram_usage_bytes"),
-                ("beamline", &config.loki.beamline_name)
-            ]
-        ),
-        system_metric!(
-            ram_available_bytes,
-            [
-                ("__name__", "ram_available_bytes"),
-                ("beamline", &config.loki.beamline_name)
-            ]
-        ),
-    ]);
+    let metrics = metric_definitions(&config);
+    let spawner = metric_spawner(tx.clone(), config.clone());
+    let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));
 
-    let futs: Vec<JoinHandle<()>> = metrics
-        .into_iter()
-        .map(|(name, (func, labels))| {
-            let interval = config.metrics.interval_for_metric(&name);
-            spawn(metric_future(
-                func,
-                labels,
-                interval,
-                config.redis.clone(),
-                tx.clone(),
-            ))
-        })
-        .collect();
+    let watchdog = {
+        let futs = Arc::clone(&futs);
+        tokio::spawn(watchdog_loop(futs, metrics, tx.clone(), config.clone()))
+    };
 
     consumer_loop(&mut rx, config.metrics.clone()).await;
+    watchdog.abort();
+    let _ = watchdog.await;
     rx.close();
-    // with rx closed, all futures should exit on their next iteration\, but some could be at too long
+    // with rx closed, all futures should exit on their next iteration, but some could be at too long
     // of an interval to wait for
-    for handle in &futs {
+    for handle in futs.lock().await.values() {
         handle.abort(); // abort each task
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use crate::metrics::{MetricFunc, cpu_usage_percent};
-
-    #[test]
-    fn test_system_metric_macro() {
-        let (name, (_, labels)): (String, (MetricFunc, HashMap<String, String>)) =
-            system_metric!(cpu_usage_percent, [("beamline", "x99xa")]);
-        assert_eq!(name, "cpu_usage_percent");
-        assert_eq!(labels.get("beamline").unwrap(), "x99xa");
     }
 }

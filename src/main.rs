@@ -15,6 +15,7 @@ mod loki_push;
 use crate::loki_push::consumer_loop;
 
 mod metrics;
+mod metrics_core;
 use crate::metrics::metrics_loop;
 
 use clap::Parser;
@@ -52,7 +53,7 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
 async fn main_loop(config: IngestorConfig) {
     println!("Starting log ingestor with config: \n {:?}", &config);
 
-    let metrics = tokio::spawn(metrics_loop(config.clone()));
+    let _metrics = tokio::spawn(metrics_loop(config.clone()));
 
     let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
     let producer = tokio::spawn(producer_loop(tx, config.redis.clone()));
