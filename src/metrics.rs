@@ -50,9 +50,31 @@ fn metric_spawner(
 //
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 
+fn get_versions() -> MetricLabels {
+    use std::process::{Command, Stdio};
+
+    let bec_versions_raw = match Command::new("bec")
+        .arg("--version")
+        .arg("--json")
+        .stdout(Stdio::piped())
+        .output()
+    {
+        Ok(bec_versions_raw) => bec_versions_raw,
+        Err(e) => {
+            println!("ERROR: executing 'bec --version --json' failed: {e}");
+            return HashMap::from([("versions".into(), "failed to run command".into())]);
+        }
+    };
+    let Ok(parsed) = serde_json::from_slice(&bec_versions_raw.stdout) else {
+        println!("ERROR: decoding output from 'bec --version --json' failed");
+        return HashMap::from([("versions".into(), "failed to run command".into())]);
+    };
+    parsed
+}
+
 fn deployment() -> MetricFuncResult {
-    let bec_version = String::from("1.2.3");
-    let extra_labels: MetricLabels = HashMap::from([("bec_version".into(), bec_version)]);
+    let mut extra_labels: MetricLabels = HashMap::from([]);
+    extra_labels.extend(get_versions());
     (sample_now(1.into()), Some(extra_labels))
 }
 
