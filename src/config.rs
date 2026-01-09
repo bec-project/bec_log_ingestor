@@ -268,7 +268,7 @@ this is not toml
         let config = assemble_config((path, Some(metrics_path)));
         assert_eq!(config.loki.auth.password, "test-loki-password");
         assert_eq!(config.loki.auth.username, "test-loki");
-        assert_eq!(config.metrics.intervals.len(), 4);
+        assert_eq!(config.metrics.intervals.len(), 5);
     }
 
     #[test]
@@ -279,14 +279,13 @@ this is not toml
         let config = assemble_config((path, Some(metrics_path)));
         assert_eq!(config.loki.auth.password, "test-loki-password");
         assert_eq!(config.loki.auth.username, "test-loki");
-        assert_eq!(config.metrics.intervals.len(), 4);
         assert_eq!(
-            config.metrics.intervals.get("cpu_usage"),
+            config.metrics.intervals.get("cpu_usage_percent"),
             Some(&MetricInterval::Secondly(30)) // from commandline arg
         );
         assert_eq!(
-            config.metrics.intervals.get("ram_usage"),
-            Some(&MetricInterval::Secondly(75)) // from referenced file
+            config.metrics.intervals.get("ram_usage_bytes"),
+            Some(&MetricInterval::Secondly(15)) // from referenced file
         );
         assert_eq!(
             config.metrics.intervals.get("new_metric"),
