@@ -35,13 +35,13 @@ fn read_logs(
     let raw_reply: redis::streams::StreamReadReply =
         redis_conn.xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))?;
 
-    if raw_reply.keys.len() == 0 {
+    if raw_reply.keys.is_empty() {
         return Ok((Some(last_id.to_owned()), vec![]));
     }
 
     let log_key = raw_reply
         .keys
-        .get(0)
+        .first()
         .ok_or_else(|| str_error(KEY_MISMATCH))?;
 
     let last_id = log_key.ids.last().map(|i| i.id.clone());
@@ -58,7 +58,7 @@ fn process_data(values: Vec<redis::Value>) -> Result<Vec<LogMessagePack>, Box<dy
     let un_valued: Vec<Vec<u8>> = values
         .iter()
         .map(|e| match e {
-            redis::Value::BulkString(x) => Ok(x.iter().cloned().collect()),
+            redis::Value::BulkString(x) => Ok(x.to_vec()),
             _ => Err(str_error("Log message data not binary-data!")),
         })
         .collect::<Result<Vec<Vec<u8>>, Box<dyn Error>>>()?;

@@ -13,7 +13,7 @@ pub trait FromTomlFile {
         file.read_to_string(&mut contents)
             .expect("Cannot read supplied config file!");
         let self_name = std::any::type_name::<Self>();
-        toml::from_str(&contents).expect(format!("Invalid TOML for {self_name} struct").as_str())
+        toml::from_str(&contents).unwrap_or_else(|_| panic!("Invalid TOML for {self_name} struct"))
     }
 }
 
