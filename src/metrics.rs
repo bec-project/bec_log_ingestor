@@ -10,11 +10,14 @@ use crate::{
 
 use prost::Message;
 use snap::raw::Encoder;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
-use tokio::sync::{
-    Mutex,
-    mpsc::{self, UnboundedSender},
+use tokio::{
+    sync::{
+        Mutex,
+        mpsc::{self, UnboundedSender},
+    },
+    time::sleep,
 };
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -113,7 +116,7 @@ async fn watchdog_loop(
 
         if !finished.is_empty() {
             println!(
-                "ERROR: The following metric coroutines have crashed, retarting them: {finished:?}",
+                "ERROR: The following metric coroutines have crashed, restarting them: {finished:?}",
             );
             for name in finished {
                 if let Some((func, labels)) = metrics.get(&name) {
@@ -131,6 +134,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
     let mut buffer: Vec<TimeSeries> = Vec::with_capacity(chunk_size);
     let mut proto_encoded_buffer: Vec<u8> = Vec::new();
     let mut snap_encoder = Encoder::new();
+    let mut retries: u8 = 0;
     let client = reqwest::Client::new();
 
     loop {
@@ -162,6 +166,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
             .await
         {
             Ok(res) => {
+                retries = 0;
                 println!("Sent {open} metrics to Mimir.");
                 if !res.status().is_success() {
                     let text = res
@@ -173,6 +178,13 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
             }
             Err(res) => {
                 println!("ERROR: {res:?}");
+                if retries == 3 {
+                    println!("Maximum retry attempts exceeded, exiting.");
+                    exit(0x45); // Service unavailable
+                }
+                println!("Retrying in 5s.");
+                sleep(Duration::from_secs(5)).await;
+                retries += 1;
             }
         };
         buffer.clear();
