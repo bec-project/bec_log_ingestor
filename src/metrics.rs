@@ -1,7 +1,7 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricFunc, MetricFuncResult, MetricLabels, metric_future,
+        MetricDefinitions, MetricFuncResult, MetricFutures, MetricLabels, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
@@ -12,40 +12,13 @@ use prost::Message;
 use snap::raw::Encoder;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
-use tokio::{
-    spawn,
-    sync::{
-        Mutex,
-        mpsc::{self, UnboundedSender},
-    },
-    task::JoinHandle,
+use tokio::sync::{
+    Mutex,
+    mpsc::{self, UnboundedSender},
 };
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-type MetricDefinition = (MetricFunc, MetricLabels);
-type MetricDefinitions = Arc<HashMap<String, MetricDefinition>>;
-type MetricFutures = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
-
-fn metric_spawner(
-    tx: UnboundedSender<TimeSeries>,
-    config: IngestorConfig,
-) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
-    move |(name, (func, labels))| {
-        (
-            name.clone(),
-            spawn(metric_future(
-                func.clone(),
-                labels.clone(),
-                config.metrics.interval_for_metric(&name),
-                config.redis.clone(),
-                tx.clone(),
-            )),
-        )
-    }
-}
-
-//
 // METRIC FUNCTION DEFINITIONS
 //
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
