@@ -69,6 +69,9 @@ pub(crate) fn metric_spawner(
     }
 }
 
+/// Takes a metric function, its arguments, its repetition interval, a clone of the channel transmitter, and an owned
+/// hashmap of the associated labels, and returns a loop awaiting the interval ticks which sends a prometheus/mimir
+/// TimeSeries to the channel, ready for the consumer loop in metrics.rs to bundle and send to the database
 #[macro_export]
 macro_rules! transmit_metric_loop {
     ($func:expr, ($($args:expr),*), $interval:expr, $tx:expr, $labels:expr) => {
@@ -80,10 +83,10 @@ macro_rules! transmit_metric_loop {
                 owned_labels.extend(extra_labels);
             }
             if $tx
-                .send(dbg!(TimeSeries {
+                .send(TimeSeries {
                     labels: labels_from_hashmap(&owned_labels),
                     samples: vec![sample],
-                }))
+                })
                 .is_err()
             {
                 break;
@@ -114,8 +117,35 @@ pub(crate) async fn metric_future(
     };
 }
 
-// Macros create a hashmap entry (name, (func, labels)) from a conforming function
-// These can be simplified to a nested macro when the feature is stabilized: https://github.com/rust-lang/rust/issues/83527
+/// These macros create an entry for the main MetricDefinitions hashmap (name: String, (func: MetricFunc, labels: HM<String, String>))
+/// from a conforming function, automatically adding the '__name__' label for prometheus/mimir from the function name
+///
+/// E.g. for a metric function which takes no arguments:
+/// ```
+/// /// Metric which is always true
+/// fn always_true() -> MetricFuncResult {
+///     (sample_now(1.into()), None)
+/// }
+///
+/// simple_metric!(always_true, [("extra_label_key": "extra_label_value")])
+/// ```
+/// will give you:
+/// ```
+/// (
+///     "always_true",
+///     (
+///         MetricFunc::Simple(Arc::new(always_true as dyn Fn() -> MetricFuncResult + Send + Sync)),
+///         HashMap::from([
+///                         ("__name__".into(): "always_true".into()),
+///                         ("extra_label_key".into(): "extra_label_value".into()),
+///                       ]),
+///     )
+/// )
+/// ```
+///
+/// TODO: These can be simplified to a nested macro when the feature is stabilized: https://github.com/rust-lang/rust/issues/83527
+///
+/// TODO: also take the "beamline" label from the config.
 #[macro_export]
 macro_rules! simple_metric {
     ($func:expr, [ $(($label_k:expr, $label_v:expr)),*]) => {

@@ -19,10 +19,14 @@ use tokio::sync::{
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+//
 // METRIC FUNCTION DEFINITIONS
 //
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
+//
 
+/// Runs 'bec --version --json' and returns the result, hopefully the most recent pip versions of the BEC libraries.
+/// If the command fails, returns a placeholder.
 fn get_versions() -> MetricLabels {
     use std::process::{Command, Stdio};
 
