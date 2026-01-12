@@ -1,9 +1,17 @@
-use crate::{config::RedisConfig, redis_logs::create_redis_conn};
+use crate::{
+    config::{IngestorConfig, RedisConfig},
+    redis_logs::create_redis_conn,
+};
 
 use redis::Connection;
 use std::{collections::HashMap, sync::Arc};
 use sysinfo::System;
-use tokio::{sync::mpsc::UnboundedSender, time};
+use tokio::{
+    spawn,
+    sync::{Mutex, mpsc::UnboundedSender},
+    task::JoinHandle,
+    time,
+};
 
 pub mod prometheus {
     include!(concat!(env!("OUT_DIR"), "/prometheus.rs"));
@@ -15,6 +23,9 @@ pub(crate) type SimpleMetricFunc = Arc<dyn Fn() -> MetricFuncResult + Send + Syn
 pub(crate) type SysinfoMetricFunc = Arc<dyn Fn(&mut System) -> MetricFuncResult + Send + Sync>;
 pub(crate) type RedisMetricFunc = Arc<dyn Fn(&mut Connection) -> MetricFuncResult + Send + Sync>;
 pub(crate) type MetricLabels = HashMap<String, String>;
+pub(crate) type MetricDefinition = (MetricFunc, MetricLabels);
+pub(crate) type MetricDefinitions = Arc<HashMap<String, MetricDefinition>>;
+pub(crate) type MetricFutures = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
 
 #[derive(Clone)]
 pub(crate) enum MetricFunc {
@@ -39,6 +50,25 @@ pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
         })
         .collect()
 }
+
+pub(crate) fn metric_spawner(
+    tx: UnboundedSender<TimeSeries>,
+    config: IngestorConfig,
+) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
+    move |(name, (func, labels))| {
+        (
+            name.clone(),
+            spawn(metric_future(
+                func.clone(),
+                labels.clone(),
+                config.metrics.interval_for_metric(&name),
+                config.redis.clone(),
+                tx.clone(),
+            )),
+        )
+    }
+}
+
 #[macro_export]
 macro_rules! transmit_metric_loop {
     ($func:expr, ($($args:expr),*), $interval:expr, $tx:expr, $labels:expr) => {
@@ -46,10 +76,8 @@ macro_rules! transmit_metric_loop {
             $interval.tick().await;
             let (sample, opt_extra_labels) = $func($($args),*);
             let mut owned_labels = $labels;
-            dbg!(&opt_extra_labels);
             if let Some(extra_labels) = opt_extra_labels {
                 owned_labels.extend(extra_labels);
-                dbg!(&owned_labels);
             }
             if $tx
                 .send(dbg!(TimeSeries {
@@ -127,27 +155,93 @@ macro_rules! redis_metric {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
+    use crate::{config::MetricInterval, metrics_core::*};
+    use std::{collections::HashMap, time::Duration};
     use sysinfo::System;
-
-    use crate::metrics_core::{MetricFunc, MetricFuncResult, prometheus::Sample};
+    use tokio::{sync::mpsc, time::interval};
 
     fn test_metric(system: &mut System) -> MetricFuncResult {
         (
             Sample {
-                value: 0.0,
-                timestamp: 0,
+                value: 12.34,
+                timestamp: 5678,
             },
             None,
         )
     }
 
+    fn test_config() -> IngestorConfig {
+        let test_str = "
+[redis.url]
+url = \"http://127.0.0.1\"
+port = 12345
+
+[loki]
+auth = { username = \"test_user\", password = \"test_password\" }
+url = \"http://127.0.0.1/api/v1/push\"
+
+[metrics]
+auth = { username = \"test_user\", password = \"test_password\" }
+url = \"http://127.0.0.1\"
+";
+        toml::from_str(&test_str).unwrap()
+    }
+
     #[test]
     fn test_system_metric_macro() {
-        let (name, (_, labels)): (String, (MetricFunc, HashMap<String, String>)) =
+        let (name, (func, labels)): (String, (MetricFunc, HashMap<String, String>)) =
             system_metric!(test_metric, [("beamline", "x99xa")]);
         assert_eq!(name, "test_metric");
         assert_eq!(labels.get("beamline").unwrap(), "x99xa");
+
+        let mut system = System::new();
+        match func {
+            MetricFunc::Simple(_) => assert!(false),
+            MetricFunc::Redis(_) => assert!(false),
+            MetricFunc::System(func) => {
+                let (samp, extra_labels) = func(&mut system);
+                assert!(extra_labels.is_none());
+                assert_eq!(samp.value, 12.34);
+                assert_eq!(samp.timestamp, 5678);
+            }
+        }
+    }
+
+    #[test]
+    fn test_sample_now() {
+        let samp = sample_now(0.0);
+        let ts = chrono::Utc::now().timestamp_millis();
+        dbg!(&samp.timestamp);
+        dbg!(ts);
+        assert!(samp.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_metric_future() {
+        let mut config = test_config();
+        config
+            .metrics
+            .intervals
+            .insert("test_metric".into(), MetricInterval::Millis(1));
+        let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
+        let mut spawner = metric_spawner(tx.clone(), config.clone());
+
+        let (name, (func, labels)): (String, (MetricFunc, HashMap<String, String>)) =
+            system_metric!(test_metric, [("beamline", "x99xa")]);
+
+        let (name, fut) = spawner((&name, &(func, labels)));
+        let mut buf: Vec<TimeSeries> = Vec::with_capacity(10);
+        rx.recv_many(&mut buf, 10).await;
+        fut.abort();
+
+        let item = buf.get(0).unwrap();
+        assert_eq!(&item.labels.len(), &2);
+        let labels: MetricLabels = item
+            .labels
+            .iter()
+            .map(|l| (l.name.clone(), l.value.clone()))
+            .collect();
+        assert_eq!(labels.get("__name__").unwrap(), &"test_metric".to_string());
+        assert_eq!(labels.get("beamline").unwrap(), &"x99xa".to_string());
     }
 }

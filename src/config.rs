@@ -84,6 +84,7 @@ pub struct LokiConfig {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum MetricInterval {
+    Millis(u64),
     Secondly(u64),
     Minutely(u64),
     Hourly(u64),
@@ -100,6 +101,7 @@ impl FromTomlFile for MetricIntervalsConfig {}
 impl Into<tokio::time::Interval> for &MetricInterval {
     fn into(self) -> tokio::time::Interval {
         match self {
+            MetricInterval::Millis(n) => tokio::time::interval(Duration::from_millis(*n)),
             MetricInterval::Secondly(n) => tokio::time::interval(Duration::from_secs(*n)),
             MetricInterval::Minutely(n) => tokio::time::interval(Duration::from_secs(n * 60)),
             MetricInterval::Hourly(n) => tokio::time::interval(Duration::from_secs(n * 3600)),
