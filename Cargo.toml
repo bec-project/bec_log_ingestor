@@ -21,8 +21,11 @@ post_install_script = "install/restart_service"
 post_install_script_prog = ["/bin/bash"]
 post_install_script_flags = 0b100
 
-[target.aarch64-unknown-linux-gnu]
-linker = "aarch64-linux-gnu-gcc"
+[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get --assume-yes install protobuf-compiler:$CROSS_DEB_ARCH",
+]
 
 [dependencies]
 chrono = "0.4.42"
