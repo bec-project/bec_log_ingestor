@@ -16,11 +16,6 @@ fn main() -> Result<()> {
                 .arg("install")
                 .arg("protobuf-compiler")
                 .output();
-            _ = Command::new("sudo")
-                .arg("apt-get")
-                .arg("install")
-                .arg("gcc-aarch64-linux-gnu")
-                .output();
         }
     };
     prost_build::compile_protos(&["src/prometheus_write.proto"], &["src/"])?;
