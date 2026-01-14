@@ -19,7 +19,9 @@ jobs:
     with:
       toolchain: stable
       targets: |
+        aarch64-unknown-linux-gnu
         x86_64-unknown-linux-gnu
+        x86_64-unknown-linux-musl
     secrets:
       cargo-registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
   
