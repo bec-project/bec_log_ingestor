@@ -1,3 +1,22 @@
+# [1.5.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.4.2...v1.5.0) (2026-01-14)
+
+
+### Bug Fixes
+
+* aarch build deps ([cd91aed](https://github.com/bec-project/bec_log_ingestor/commit/cd91aedab133e72a2eaf415fbde650adc2110854))
+* add other targets ([2344cf1](https://github.com/bec-project/bec_log_ingestor/commit/2344cf14041673e708b93835d231cdcd8c523db9))
+* improve build rs ([cd32b50](https://github.com/bec-project/bec_log_ingestor/commit/cd32b50480569b2495c27889e560b5a8ebd6c659))
+* remove failing apple build for now ([aa7ae64](https://github.com/bec-project/bec_log_ingestor/commit/aa7ae64b588c1d76c7e19e501463f0bfbf9e5a9b))
+* use updated reqwest with rustls ([993a3ed](https://github.com/bec-project/bec_log_ingestor/commit/993a3ede7b8c29b8f33edf6094fc869932fb0e15))
+
+
+### Features
+
+* add async framework for pushing metrics ([2277ca6](https://github.com/bec-project/bec_log_ingestor/commit/2277ca6ca7a9bb63faf68463e77caeff49abe233))
+* add metric for deployed versions ([b85b1b7](https://github.com/bec-project/bec_log_ingestor/commit/b85b1b7dd5644870bb2419f2323566bf222dcfc9))
+* add watchdog to restart failed metrics ([f971fe7](https://github.com/bec-project/bec_log_ingestor/commit/f971fe768afd5cde1f3f2fe0f62463682bfdc080))
+* exit with failure after 3 tries communicating with mimir ([a3614d8](https://github.com/bec-project/bec_log_ingestor/commit/a3614d89db745a9408ca0f08690b87e6640e51c7))
+
 ## [1.4.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.4.1...v1.4.2) (2026-01-09)
 
 
