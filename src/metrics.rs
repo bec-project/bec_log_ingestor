@@ -9,6 +9,7 @@ use crate::{
 };
 
 use prost::Message;
+use reqwest_traits::{Client, RequestBuilder};
 use snap::raw::Encoder;
 use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
@@ -129,13 +130,16 @@ async fn watchdog_loop(
 }
 
 /// Consumes any metrics passed into the channel and encodes them in a Prometheus WriteRequest
-async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: MetricsConfig) {
+async fn consumer_loop<C: Client>(
+    client: C,
+    rx: &mut mpsc::UnboundedReceiver<TimeSeries>,
+    config: MetricsConfig,
+) {
     let chunk_size = 100;
     let mut buffer: Vec<TimeSeries> = Vec::with_capacity(chunk_size);
     let mut proto_encoded_buffer: Vec<u8> = Vec::new();
     let mut snap_encoder = Encoder::new();
     let mut retries: u8 = 0;
-    let client = reqwest::Client::new();
 
     loop {
         let open = rx.recv_many(&mut buffer, chunk_size).await;
@@ -206,7 +210,8 @@ pub async fn metrics_loop(config: IngestorConfig) {
         tokio::spawn(watchdog_loop(futs, metrics, tx.clone(), config.clone()))
     };
 
-    consumer_loop(&mut rx, config.metrics.clone()).await;
+    let http = reqwest::Client::new();
+    consumer_loop(http, &mut rx, config.metrics.clone()).await;
     watchdog.abort();
     let _ = watchdog.await;
     rx.close();
