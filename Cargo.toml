@@ -21,6 +21,9 @@ post_install_script = "install/restart_service"
 post_install_script_prog = ["/bin/bash"]
 post_install_script_flags = 0b100
 
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
 [dependencies]
 chrono = "0.4.42"
 clap = { version = "4.5.52", features = ["derive"] }
