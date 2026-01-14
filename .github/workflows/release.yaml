@@ -19,7 +19,6 @@ jobs:
     with:
       toolchain: stable
       targets: |
-        aarch64-apple-darwin
         x86_64-unknown-linux-gnu
     secrets:
       cargo-registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
