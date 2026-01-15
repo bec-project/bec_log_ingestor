@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.1...v1.5.2) (2026-01-15)
+
+
+### Bug Fixes
+
+* build env to use cmake for aws-lc-sys ([d676fc5](https://github.com/bec-project/bec_log_ingestor/commit/d676fc593bbf6f0a6f984cfbce4223ef22cd8ce0))
+
 ## [1.5.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.0...v1.5.1) (2026-01-15)
 
 
