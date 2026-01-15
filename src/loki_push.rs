@@ -1,6 +1,9 @@
 use tokio::sync::mpsc;
 
-use crate::{config::LokiConfig, models::LogMsg};
+use crate::{
+    config::{IngestorConfig, LokiConfig},
+    models::LogMsg,
+};
 
 /// Convert a LogRecord to the document we want Loki to ingest
 fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> serde_json::Value {
@@ -22,17 +25,17 @@ fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> serde_json::Value {
     ])
 }
 
-fn make_json_body(msgs: &[LogMsg], config: &LokiConfig) -> serde_json::Value {
+fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_json::Value {
     let values = msgs
         .iter()
-        .map(|e| json_from_logmsg(e, config))
+        .map(|e| json_from_logmsg(e, &config.loki))
         .collect::<Vec<serde_json::Value>>();
 
     serde_json::json!({
         "streams" : [
             {
                 "stream" :{
-                    "label": format!("bec_logs_{}", config.beamline_name)
+                    "label": format!("bec_logs_{}", &config.loki.beamline_name)
                 },
                 "values": values
             }
@@ -40,20 +43,25 @@ fn make_json_body(msgs: &[LogMsg], config: &LokiConfig) -> serde_json::Value {
     })
 }
 
-pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: LokiConfig) {
-    let mut buffer: Vec<LogMsg> = Vec::with_capacity(config.chunk_size.into());
+pub async fn consumer_loop(
+    rx: &mut mpsc::UnboundedReceiver<LogMsg>,
+    config: &'static IngestorConfig,
+) {
+    let mut buffer: Vec<LogMsg> = Vec::with_capacity(config.loki.chunk_size.into());
     let client = reqwest::Client::new();
 
     loop {
-        let open = rx.recv_many(&mut buffer, config.chunk_size.into()).await;
+        let open = rx
+            .recv_many(&mut buffer, config.loki.chunk_size.into())
+            .await;
         if open == 0 {
             break;
         }
-        let body = make_json_body(&buffer, &config).to_string();
+        let body = make_json_body(&buffer, config).to_string();
         match client
-            .post(&config.url)
+            .post(&config.loki.url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .basic_auth(&config.auth.username, Some(&config.auth.password))
+            .basic_auth(&config.loki.auth.username, Some(&config.loki.auth.password))
             .body(body)
             .send()
             .await
@@ -79,7 +87,7 @@ pub async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<LogMsg>, config: Lok
 
 #[cfg(test)]
 mod tests {
-    use crate::models::LogRecord;
+    use crate::{config::assemble_config, models::LogRecord};
 
     use super::*;
 
@@ -134,19 +142,17 @@ mod tests {
         }
     }
 
-    fn loki_config() -> LokiConfig {
-        let test_str = "
-url = \"http://localhost\"
-auth = { username = \"test_user\", password = \"test_password\" }
-
-";
-        toml::from_str(&test_str).unwrap()
+    fn config() -> &'static IngestorConfig {
+        use std::path::PathBuf;
+        let path = PathBuf::from("./install/example_config.toml");
+        let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
+        Box::leak(Box::new(assemble_config((path, Some(metrics_path)))))
     }
 
     #[test]
     fn test_make_docs_values_empty() {
         let records: Vec<LogMsg> = vec![];
-        let docs = make_json_body(&records, &loki_config());
+        let docs = make_json_body(&records, config());
         assert_eq!(
             docs.to_string(),
             "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[]}]}"
@@ -160,7 +166,7 @@ auth = { username = \"test_user\", password = \"test_password\" }
             level: "info".to_string(),
         }
         .into();
-        let docs = make_json_body(&vec![record.clone()], &loki_config());
+        let docs = make_json_body(&vec![record.clone()], config());
         // Each record should produce two JSON bodies (action + doc)
         assert_eq!(
             docs.to_string(),
@@ -180,7 +186,7 @@ auth = { username = \"test_user\", password = \"test_password\" }
             level: "warn".to_string(),
         }
         .into();
-        let docs = make_json_body(&vec![record1, record2], &loki_config());
+        let docs = make_json_body(&vec![record1, record2], config());
         assert_eq!(
             docs.to_string(),
             "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[[\"0\",\"a\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"info\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}],[\"0\",\"b\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"warn\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}]]}]}"

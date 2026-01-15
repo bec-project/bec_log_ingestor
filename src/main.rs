@@ -50,19 +50,20 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
     (args.config, args.metrics_config)
 }
 
-async fn main_loop(config: IngestorConfig) {
+async fn main_loop(config: &'static IngestorConfig) {
     println!("Starting log ingestor with config: \n {:?}", &config);
 
-    let _metrics = tokio::spawn(metrics_loop(config.clone()));
+    let _metrics = tokio::spawn(metrics_loop(config));
 
     let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
-    let producer = tokio::spawn(producer_loop(tx, config.redis.clone()));
+    let producer = tokio::spawn(producer_loop(tx, config));
 
-    consumer_loop(&mut rx, config.loki.clone()).await;
+    consumer_loop(&mut rx, config).await;
     let _ = tokio::join!(producer);
 }
 
 #[tokio::main]
 async fn main() {
-    main_loop(assemble_config(config_paths())).await
+    let config = Box::leak(Box::new(assemble_config(config_paths())));
+    main_loop(config).await
 }

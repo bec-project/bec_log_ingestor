@@ -53,7 +53,7 @@ pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
 
 pub(crate) fn metric_spawner(
     tx: UnboundedSender<TimeSeries>,
-    config: IngestorConfig,
+    config: &'static IngestorConfig,
 ) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
     move |(name, (func, labels))| {
         (
@@ -200,7 +200,7 @@ mod tests {
         )
     }
 
-    fn test_config() -> IngestorConfig {
+    fn test_config() -> &'static mut IngestorConfig {
         let test_str = "
 [redis.url]
 url = \"http://127.0.0.1\"
@@ -214,7 +214,8 @@ url = \"http://127.0.0.1/api/v1/push\"
 auth = { username = \"test_user\", password = \"test_password\" }
 url = \"http://127.0.0.1\"
 ";
-        toml::from_str(&test_str).unwrap()
+        let cfg: IngestorConfig = toml::from_str(&test_str).unwrap();
+        Box::leak(Box::new(cfg))
     }
 
     #[test]
@@ -254,7 +255,7 @@ url = \"http://127.0.0.1\"
             .intervals
             .insert("test_metric".into(), MetricInterval::Millis(1));
         let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
-        let mut spawner = metric_spawner(tx.clone(), config.clone());
+        let mut spawner = metric_spawner(tx.clone(), config);
 
         let (name, (func, labels)): (String, (MetricFunc, HashMap<String, String>)) =
             system_metric!(test_metric, [("beamline", "x99xa")]);

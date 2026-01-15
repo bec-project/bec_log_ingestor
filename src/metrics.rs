@@ -97,10 +97,10 @@ async fn watchdog_loop(
     futs: MetricFutures,
     metrics: MetricDefinitions,
     tx: UnboundedSender<TimeSeries>,
-    config: IngestorConfig,
+    config: &'static IngestorConfig,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(60));
-    let mut spawner = metric_spawner(tx.clone(), config.clone());
+    let mut spawner = metric_spawner(tx.clone(), config);
 
     loop {
         interval.tick().await;
@@ -194,16 +194,16 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
 }
 
 /// Main routine to start the metrics service
-pub async fn metrics_loop(config: IngestorConfig) {
+pub async fn metrics_loop(config: &'static IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
 
     let metrics = metric_definitions(&config);
-    let spawner = metric_spawner(tx.clone(), config.clone());
+    let spawner = metric_spawner(tx.clone(), config);
     let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));
 
     let watchdog = {
         let futs = Arc::clone(&futs);
-        tokio::spawn(watchdog_loop(futs, metrics, tx.clone(), config.clone()))
+        tokio::spawn(watchdog_loop(futs, metrics, tx.clone(), config))
     };
 
     consumer_loop(&mut rx, config.metrics.clone()).await;
