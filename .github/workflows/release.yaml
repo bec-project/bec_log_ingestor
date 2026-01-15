@@ -44,6 +44,7 @@ jobs:
     - name: Build RPM
       run: |
         # In case checkout didn't catch the commit from release, pull after setting up toolchain
+        cargo install cross
         git pull
         cross build --release
         strip -s target/x86_64-unknown-linux-gnu/release/bec_log_ingestor
