@@ -1,13 +1,17 @@
-
-
 [build]
 build-std = false                              # do not build the std library
 default-target = "x86_64-unknown-linux-gnu"    # use this target if none is explicitly provided
 pre-build = [                                  # additional commands to run prior to building the package
-    # "dpkg --add-architecture $CROSS_DEB_ARCH", 
-    "apt-get update && apt-get --assume-yes install protobuf-compiler",
+    "apt-get update && apt-get --assume-yes install protobuf-compiler build-essential cmake clang",
     "/usr/bin/protoc --version",
 ]
+zig = false
+
+[build.env]
+passthrough = ["AWS_LC_SYS_CMAKE_BUILDER"]
+
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
 
 [target.aarch64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge"
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
