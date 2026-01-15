@@ -45,8 +45,8 @@ jobs:
       run: |
         # In case checkout didn't catch the commit from release, pull after setting up toolchain
         git pull
-        cargo build --release
-        strip -s target/release/bec_log_ingestor
+        cross build --release
+        strip -s target/x86_64-unknown-linux-gnu/release/bec_log_ingestor
         cargo install cargo-generate-rpm
         cargo generate-rpm --signing-key=<(echo "${{ secrets.RPM_SIGNING_KEY }}")
 

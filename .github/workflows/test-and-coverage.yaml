@@ -15,7 +15,7 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          apt-get update && apt-get install -y protobuf-compiler
+          apt-get update && apt-get install -y protobuf-compiler build-essential cmake clang
           cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
 
       - name: Upload coverage to Codecov
