@@ -1,4 +1,4 @@
-use crate::config::RedisConfig;
+use crate::config::{IngestorConfig, RedisConfig};
 use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
 use rmp_serde;
@@ -18,10 +18,10 @@ pub fn create_redis_conn(url: &str) -> Result<redis::Connection, redis::RedisErr
     client.get_connection()
 }
 
-fn stream_read_opts(config: &RedisConfig) -> redis::streams::StreamReadOptions {
+fn stream_read_opts(config: &'static IngestorConfig) -> redis::streams::StreamReadOptions {
     redis::streams::StreamReadOptions::default()
-        .count(config.chunk_size.into())
-        .block(config.blocktime_millis)
+        .count(config.redis.chunk_size.into())
+        .block(config.redis.blocktime_millis)
         .group("log-ingestor", "log-ingestor")
 }
 
@@ -30,7 +30,7 @@ fn stream_read_opts(config: &RedisConfig) -> redis::streams::StreamReadOptions {
 fn read_logs(
     redis_conn: &mut redis::Connection,
     last_id: &String,
-    config: &RedisConfig,
+    config: &'static IngestorConfig,
 ) -> Result<(Option<String>, Vec<redis::Value>), Box<dyn Error>> {
     let raw_reply: redis::streams::StreamReadReply =
         redis_conn.xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))?;
@@ -76,9 +76,9 @@ fn extract_records(messages: Vec<LogMessagePack>) -> Vec<LogMsg> {
         .collect()
 }
 
-fn setup_consumer_group(conn: &mut redis::Connection, config: &RedisConfig) {
+fn setup_consumer_group(conn: &mut redis::Connection, config: &'static IngestorConfig) {
     let group: Result<(), redis::RedisError> =
-        conn.xgroup_create(&LOGGING_ENDPOINT, &config.consumer_group, "0");
+        conn.xgroup_create(&LOGGING_ENDPOINT, &config.redis.consumer_group, "0");
     match group {
         Ok(_) => (),
         Err(error) => {
@@ -87,12 +87,12 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &RedisConfig) {
             {
                 println!(
                     "Group {} already exists, rejoining with ID {}",
-                    &config.consumer_group, &config.consumer_id
+                    &config.redis.consumer_group, &config.redis.consumer_id
                 )
             } else {
                 panic!(
                     "Failed to create Redis consumer group {}! Code: {:?}",
-                    &config.consumer_group,
+                    &config.redis.consumer_group,
                     &error.code()
                 );
             }
@@ -100,16 +100,19 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &RedisConfig) {
     }
     let create_id: Result<(), redis::RedisError> = conn.xgroup_createconsumer(
         &LOGGING_ENDPOINT,
-        &config.consumer_group,
-        &config.consumer_id,
+        &config.redis.consumer_group,
+        &config.redis.consumer_id,
     );
     create_id.expect(&format!(
         "Failed to create Redis consumer ID {} in group {}!",
-        &config.consumer_id, &config.consumer_group
+        &config.redis.consumer_id, &config.redis.consumer_group
     ));
 }
 
-fn check_connection(redis_conn: &mut redis::Connection, config: &RedisConfig) -> Result<(), ()> {
+fn check_connection(
+    redis_conn: &mut redis::Connection,
+    config: &'static IngestorConfig,
+) -> Result<(), ()> {
     if let Ok(key_exists) = redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
         if !key_exists {
             println!("Logging endpoint doesn't exist, exiting.");
@@ -121,9 +124,9 @@ fn check_connection(redis_conn: &mut redis::Connection, config: &RedisConfig) ->
     setup_consumer_group(redis_conn, &config);
     Ok(())
 }
-pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: RedisConfig) {
+pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static IngestorConfig) {
     let mut redis_conn =
-        create_redis_conn(&config.url.full_url()).expect("Could not connect to Redis!");
+        create_redis_conn(&config.redis.url.full_url()).expect("Could not connect to Redis!");
     if check_connection(&mut redis_conn, &config).is_err() {
         return;
     }
@@ -151,7 +154,7 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: RedisConfi
             println!("{:?}", raw_read);
             redis_conn = loop {
                 {
-                    let new_conn = create_redis_conn(&config.url.full_url());
+                    let new_conn = create_redis_conn(&config.redis.url.full_url());
                     if new_conn.is_err() {
                         println!("Error reading from redis, retrying connection in 1s");
                         thread::sleep(Duration::from_millis(1000));
