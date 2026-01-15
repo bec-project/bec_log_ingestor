@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.0...v1.5.1) (2026-01-15)
+
+
+### Bug Fixes
+
+* install cross ([142254f](https://github.com/bec-project/bec_log_ingestor/commit/142254fb5cdea2cc91bd8bcc08e874af30640118))
+
 # [1.5.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.4.2...v1.5.0) (2026-01-14)
 
 
