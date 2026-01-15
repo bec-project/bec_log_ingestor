@@ -27,6 +27,8 @@ jobs:
   build-rpm:
     name: Build and push RPM
     runs-on: "ubuntu-latest"
+    env:
+      AWS_LC_SYS_CMAKE_BUILDER: 1
     needs: release
     steps:
 
