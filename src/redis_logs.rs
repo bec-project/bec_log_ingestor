@@ -128,6 +128,7 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static I
     let mut redis_conn =
         create_redis_conn(&config.redis.url.full_url()).expect("Could not connect to Redis!");
     if check_connection(&mut redis_conn, &config).is_err() {
+        println!("");
         return;
     }
 

@@ -46,7 +46,10 @@ fn get_versions() -> MetricLabels {
         }
     };
     let Ok(parsed) = serde_json::from_slice(&bec_versions_raw.stdout) else {
-        println!("ERROR: decoding output from 'bec --version --json' failed");
+        println!(
+            "ERROR: decoding output from 'bec --version --json' failed: received '{}'",
+            String::from_utf8(bec_versions_raw.stdout).unwrap_or("<invalid utf8>".into())
+        );
         return HashMap::from([("versions".into(), "failed to run command".into())]);
     };
     parsed
