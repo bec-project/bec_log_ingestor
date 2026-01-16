@@ -1,3 +1,15 @@
+## [1.5.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.2...v1.5.3) (2026-01-16)
+
+
+### Bug Fixes
+
+* add detail for failed version command log ([7423153](https://github.com/bec-project/bec_log_ingestor/commit/7423153cf7309381a25937341325e4669dac5a7b))
+
+
+### Performance Improvements
+
+* box leak config to avoid clones ([2e0309b](https://github.com/bec-project/bec_log_ingestor/commit/2e0309b56f75756bcede885d9ee58abd63520c39))
+
 ## [1.5.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.1...v1.5.2) (2026-01-15)
 
 
