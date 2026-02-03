@@ -5,10 +5,11 @@ use crate::{
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
-    simple_metric, system_metric,
+    redis_metric, simple_metric, system_metric,
 };
 
 use prost::Message;
+use redis::Commands;
 use snap::raw::Encoder;
 use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
@@ -28,36 +29,13 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-/// Runs 'bec --version --json' and returns the result, hopefully the most recent pip versions of the BEC libraries.
-/// If the command fails, returns a placeholder.
-fn get_versions() -> MetricLabels {
-    use std::process::{Command, Stdio};
+fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
+    let val: Vec<u8> = redis
+        .get("user/services/status/00b087fb-4b89-4cf2-8050-cd2d6d2b380c")
+        .expect("service status not found");
 
-    let bec_versions_raw = match Command::new("bec")
-        .arg("--version")
-        .arg("--json")
-        .stdout(Stdio::piped())
-        .output()
-    {
-        Ok(bec_versions_raw) => bec_versions_raw,
-        Err(e) => {
-            println!("ERROR: executing 'bec --version --json' failed: {e}");
-            return HashMap::from([("versions".into(), "failed to run command".into())]);
-        }
-    };
-    let Ok(parsed) = serde_json::from_slice(&bec_versions_raw.stdout) else {
-        println!(
-            "ERROR: decoding output from 'bec --version --json' failed: received '{}'",
-            String::from_utf8(bec_versions_raw.stdout).unwrap_or("<invalid utf8>".into())
-        );
-        return HashMap::from([("versions".into(), "failed to run command".into())]);
-    };
-    parsed
-}
-
-fn deployment() -> MetricFuncResult {
     let mut extra_labels: MetricLabels = HashMap::from([]);
-    extra_labels.extend(get_versions());
+    // extra_labels.extend(get_versions());
     (sample_now(1.into()), Some(extra_labels))
 }
 
@@ -77,7 +55,7 @@ fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
     Arc::new(HashMap::from([
         // Custom/simple metrics
-        simple_metric!(deployment, [("beamline", &config.loki.beamline_name)]),
+        redis_metric!(deployment, [("beamline", &config.loki.beamline_name)]),
         // System info metrics
         system_metric!(
             cpu_usage_percent,
