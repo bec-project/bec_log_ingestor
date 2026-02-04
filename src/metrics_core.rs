@@ -6,6 +6,7 @@ use crate::{
 use redis::Connection;
 use std::{collections::HashMap, sync::Arc};
 use sysinfo::System;
+use thiserror::Error;
 use tokio::{
     spawn,
     sync::{Mutex, mpsc::UnboundedSender},
@@ -18,7 +19,15 @@ pub mod prometheus {
 }
 use prometheus::{Label, Sample, TimeSeries};
 
-pub(crate) type MetricFuncResult = (Sample, Option<HashMap<String, String>>);
+#[derive(Error, Debug)]
+pub enum MetricError {
+    #[error("Temporary error: {0}")]
+    Retryable(String),
+    #[error("Fatal error: {0}")]
+    Fatal(String),
+}
+
+pub(crate) type MetricFuncResult = Result<(Sample, Option<HashMap<String, String>>), MetricError>;
 pub(crate) type SimpleMetricFunc = Arc<dyn Fn() -> MetricFuncResult + Send + Sync>;
 pub(crate) type SysinfoMetricFunc = Arc<dyn Fn(&mut System) -> MetricFuncResult + Send + Sync>;
 pub(crate) type RedisMetricFunc = Arc<dyn Fn(&mut Connection) -> MetricFuncResult + Send + Sync>;
@@ -78,7 +87,14 @@ macro_rules! transmit_metric_loop {
     ($func:expr, ($($args:expr),*), $interval:expr, $tx:expr, $labels:expr) => {
         loop {
             $interval.tick().await;
-            let (sample, opt_extra_labels) = $func($($args),*);
+            let metric_res = $func($($args),*);
+            let (sample, opt_extra_labels) = match metric_res {
+                Err(MetricError::Fatal(msg)) => {panic!("{msg}")},
+                Err(MetricError::Retryable(msg)) => {println!("WARNING: {msg}"); continue},
+                Ok(res) => {
+                    res
+                }
+            };
             let mut owned_labels = $labels;
             if let Some(extra_labels) = opt_extra_labels {
                 owned_labels.extend(extra_labels);
@@ -195,13 +211,13 @@ mod tests {
     use tokio::{sync::mpsc, time::interval};
 
     fn test_metric(system: &mut System) -> MetricFuncResult {
-        (
+        Ok((
             Sample {
                 value: 12.34,
                 timestamp: 5678,
             },
             None,
-        )
+        ))
     }
 
     fn test_config() -> &'static mut IngestorConfig {
@@ -234,7 +250,7 @@ url = \"http://127.0.0.1\"
             MetricFunc::Simple(_) => assert!(false),
             MetricFunc::Redis(_) => assert!(false),
             MetricFunc::System(func) => {
-                let (samp, extra_labels) = func(&mut system);
+                let (samp, extra_labels) = func(&mut system).unwrap();
                 assert!(extra_labels.is_none());
                 assert_eq!(samp.value, 12.34);
                 assert_eq!(samp.timestamp, 5678);

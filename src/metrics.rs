@@ -1,7 +1,8 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricDefinitions, MetricFuncResult, MetricFutures, MetricLabels, metric_spawner,
+        MetricDefinitions, MetricError, MetricFuncResult, MetricFutures, MetricLabels,
+        metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
@@ -32,11 +33,14 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 //
 
 fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
-    let val: Vec<u8> = redis
-        .get("user/services/status/DeviceServer")
-        .expect("couldn't talk to redis");
+    let key = "user/services/status/DeviceServer";
+    let val: Vec<u8> = redis.get(&key).map_err(|e| {
+        MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
+    })?;
     if val.is_empty() {
-        panic!("service status key not found in redis");
+        return Err(MetricError::Retryable(format!(
+            "No status update found at {key}"
+        )));
     }
     let status_update: StatusMessagePack =
         rmp_serde::from_slice(val.as_slice()).expect("failed to parse status message from Redis");
@@ -50,22 +54,26 @@ fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
             extra_labels.insert("bec_server".into(), versions.bec_server);
             extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
         }
-        _ => todo!(),
+        _ => {
+            return Err(MetricError::Fatal(format!(
+                "Status update {service_info:?} contained malformed ServiceInfo"
+            )));
+        }
     }
     // extra_labels.extend(get_versions());
-    (sample_now(1.into()), Some(extra_labels))
+    Ok((sample_now(1.into()), Some(extra_labels)))
 }
 
 // System info metrics
 fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    (sample_now(system.global_cpu_usage().into()), None)
+    Ok((sample_now(system.global_cpu_usage().into()), None))
 }
 fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
-    (sample_now(system.used_memory() as f64), None)
+    Ok((sample_now(system.used_memory() as f64), None))
 }
 fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
-    (sample_now(system.available_memory() as f64), None)
+    Ok((sample_now(system.available_memory() as f64), None))
 }
 
 /// Defines the list of all metrics to run
