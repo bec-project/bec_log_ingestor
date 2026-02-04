@@ -5,7 +5,7 @@ use crate::{
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
-    redis_metric, simple_metric, system_metric,
+    redis_metric, system_metric,
 };
 
 use prost::Message;
@@ -54,17 +54,27 @@ fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
 /// Defines the list of all metrics to run
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
     Arc::new(HashMap::from([
-        // Custom/simple metrics
-        redis_metric!(deployment, [("beamline", &config.loki.beamline_name)]),
+        // Redis metrics
+        redis_metric!(
+            deployment,
+            [("beamline", &config.loki.beamline_name)],
+            Some(600)
+        ),
         // System info metrics
         system_metric!(
             cpu_usage_percent,
-            [("beamline", &config.loki.beamline_name)]
+            [("beamline", &config.loki.beamline_name)],
+            None
         ),
-        system_metric!(ram_usage_bytes, [("beamline", &config.loki.beamline_name)]),
+        system_metric!(
+            ram_usage_bytes,
+            [("beamline", &config.loki.beamline_name)],
+            None
+        ),
         system_metric!(
             ram_available_bytes,
-            [("beamline", &config.loki.beamline_name)]
+            [("beamline", &config.loki.beamline_name)],
+            None
         ),
     ]))
 }
@@ -100,8 +110,8 @@ async fn watchdog_loop(
                 "ERROR: The following metric coroutines have crashed, restarting them: {finished:?}",
             );
             for name in finished {
-                if let Some((func, labels)) = metrics.get(&name) {
-                    let (_, handle) = spawner((&name, &(func.clone(), labels.clone())));
+                if let Some((func, labels, int)) = metrics.get(&name) {
+                    let (_, handle) = spawner((&name, &(func.clone(), labels.clone(), *int)));
                     futs.lock().await.insert(name, handle);
                 }
             }
