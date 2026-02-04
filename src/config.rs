@@ -122,9 +122,14 @@ pub struct MetricsConfig {
 
 impl MetricsConfig {
     /// Get an interval future for `metric_name`, defaults to one minute if unconfigured.
-    pub fn interval_for_metric(&self, metric_name: &String) -> tokio::time::Interval {
+    pub fn interval_for_metric(
+        &self,
+        metric_name: &String,
+        default_interval_seconds: Option<u32>,
+    ) -> tokio::time::Interval {
+        let default: u64 = default_interval_seconds.unwrap_or(60).into();
         match self.intervals.get(metric_name) {
-            None => tokio::time::interval(Duration::from_secs(60)),
+            None => tokio::time::interval(Duration::from_secs(default)),
             Some(int) => int.into(),
         }
     }

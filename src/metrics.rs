@@ -1,14 +1,18 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricDefinitions, MetricFuncResult, MetricFutures, MetricLabels, metric_spawner,
+        MetricDefinitions, MetricError, MetricFuncResult, MetricFutures, MetricLabels,
+        metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
-    simple_metric, system_metric,
+    redis_metric,
+    status_message::StatusMessagePack,
+    system_metric,
 };
 
 use prost::Message;
+use redis::Commands;
 use snap::raw::Encoder;
 use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
@@ -28,65 +32,74 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-/// Runs 'bec --version --json' and returns the result, hopefully the most recent pip versions of the BEC libraries.
-/// If the command fails, returns a placeholder.
-fn get_versions() -> MetricLabels {
-    use std::process::{Command, Stdio};
-
-    let bec_versions_raw = match Command::new("bec")
-        .arg("--version")
-        .arg("--json")
-        .stdout(Stdio::piped())
-        .output()
-    {
-        Ok(bec_versions_raw) => bec_versions_raw,
-        Err(e) => {
-            println!("ERROR: executing 'bec --version --json' failed: {e}");
-            return HashMap::from([("versions".into(), "failed to run command".into())]);
-        }
-    };
-    let Ok(parsed) = serde_json::from_slice(&bec_versions_raw.stdout) else {
-        println!(
-            "ERROR: decoding output from 'bec --version --json' failed: received '{}'",
-            String::from_utf8(bec_versions_raw.stdout).unwrap_or("<invalid utf8>".into())
-        );
-        return HashMap::from([("versions".into(), "failed to run command".into())]);
-    };
-    parsed
-}
-
-fn deployment() -> MetricFuncResult {
+fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
+    let key = "user/services/status/DeviceServer";
+    let val: Vec<u8> = redis.get(&key).map_err(|e| {
+        MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
+    })?;
+    if val.is_empty() {
+        return Err(MetricError::Retryable(format!(
+            "No status update found at {key}"
+        )));
+    }
+    let status_update: StatusMessagePack =
+        rmp_serde::from_slice(val.as_slice()).expect("failed to parse status message from Redis");
     let mut extra_labels: MetricLabels = HashMap::from([]);
-    extra_labels.extend(get_versions());
-    (sample_now(1.into()), Some(extra_labels))
+    let service_info = status_update.bec_codec.data.info;
+    match service_info {
+        crate::status_message::Info::ServiceInfo(info) => {
+            let versions = info.bec_codec.data.versions.unwrap();
+            extra_labels.insert("bec_lib".into(), versions.bec_lib);
+            extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
+            extra_labels.insert("bec_server".into(), versions.bec_server);
+            extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
+        }
+        _ => {
+            return Err(MetricError::Fatal(format!(
+                "Status update {service_info:?} contained malformed ServiceInfo"
+            )));
+        }
+    }
+    // extra_labels.extend(get_versions());
+    Ok((sample_now(1.into()), Some(extra_labels)))
 }
 
 // System info metrics
 fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    (sample_now(system.global_cpu_usage().into()), None)
+    Ok((sample_now(system.global_cpu_usage().into()), None))
 }
 fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
-    (sample_now(system.used_memory() as f64), None)
+    Ok((sample_now(system.used_memory() as f64), None))
 }
 fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
-    (sample_now(system.available_memory() as f64), None)
+    Ok((sample_now(system.available_memory() as f64), None))
 }
 
 /// Defines the list of all metrics to run
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
     Arc::new(HashMap::from([
-        // Custom/simple metrics
-        simple_metric!(deployment, [("beamline", &config.loki.beamline_name)]),
+        // Redis metrics
+        redis_metric!(
+            deployment,
+            [("beamline", &config.loki.beamline_name)],
+            Some(600)
+        ),
         // System info metrics
         system_metric!(
             cpu_usage_percent,
-            [("beamline", &config.loki.beamline_name)]
+            [("beamline", &config.loki.beamline_name)],
+            None
         ),
-        system_metric!(ram_usage_bytes, [("beamline", &config.loki.beamline_name)]),
+        system_metric!(
+            ram_usage_bytes,
+            [("beamline", &config.loki.beamline_name)],
+            None
+        ),
         system_metric!(
             ram_available_bytes,
-            [("beamline", &config.loki.beamline_name)]
+            [("beamline", &config.loki.beamline_name)],
+            None
         ),
     ]))
 }
@@ -104,6 +117,7 @@ async fn watchdog_loop(
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     let mut spawner = metric_spawner(tx.clone(), config);
+    interval.tick().await;
 
     loop {
         interval.tick().await;
@@ -122,8 +136,8 @@ async fn watchdog_loop(
                 "ERROR: The following metric coroutines have crashed, restarting them: {finished:?}",
             );
             for name in finished {
-                if let Some((func, labels)) = metrics.get(&name) {
-                    let (_, handle) = spawner((&name, &(func.clone(), labels.clone())));
+                if let Some((func, labels, int)) = metrics.get(&name) {
+                    let (_, handle) = spawner((&name, &(func.clone(), labels.clone(), *int)));
                     futs.lock().await.insert(name, handle);
                 }
             }

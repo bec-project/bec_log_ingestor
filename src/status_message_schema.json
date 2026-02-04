@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "BECStatus": {
+      "description": "BEC status enum",
+      "enum": [
+        2,
+        1,
+        0,
+        -1
+      ],
+      "title": "BECStatus",
+      "type": "integer"
+    },
+    "ServiceInfo": {
+      "properties": {
+        "user": {
+          "title": "User",
+          "type": "string"
+        },
+        "hostname": {
+          "title": "Hostname",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "number"
+        },
+        "versions": {
+          "$ref": "#/$defs/ServiceVersions"
+        }
+      },
+      "required": [
+        "user",
+        "hostname"
+      ],
+      "title": "ServiceInfo",
+      "type": "object"
+    },
+    "ServiceVersions": {
+      "properties": {
+        "bec_lib": {
+          "title": "Bec Lib",
+          "type": "string"
+        },
+        "bec_server": {
+          "title": "Bec Server",
+          "type": "string"
+        },
+        "bec_ipython_client": {
+          "title": "Bec Ipython Client",
+          "type": "string"
+        },
+        "bec_widgets": {
+          "title": "Bec Widgets",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bec_lib",
+        "bec_server",
+        "bec_ipython_client",
+        "bec_widgets"
+      ],
+      "title": "ServiceVersions",
+      "type": "object"
+    }
+  },
+  "description": "Status message\n\nArgs:\n    name (str): Name of the status.\n    status (BECStatus): Value of the BECStatus enum (RUNNING = 2,  BUSY = 1, IDLE = 0, ERROR = -1).\n    info (ServiceInfo | dict): Status info.\n    metadata (dict, optional): Additional metadata.",
+  "properties": {
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/BECStatus"
+    },
+    "info": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ServiceInfo"
+        },
+        {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      ],
+      "title": "Info"
+    }
+  },
+  "required": [
+    "name",
+    "status",
+    "info"
+  ],
+  "title": "StatusMessage",
+  "type": "object"
+}
