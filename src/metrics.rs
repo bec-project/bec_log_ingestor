@@ -5,7 +5,9 @@ use crate::{
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
-    redis_metric, system_metric,
+    redis_metric,
+    status_message::StatusMessagePack,
+    system_metric,
 };
 
 use prost::Message;
@@ -31,10 +33,25 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
     let val: Vec<u8> = redis
-        .get("user/services/status/00b087fb-4b89-4cf2-8050-cd2d6d2b380c")
-        .expect("service status not found");
-
+        .get("user/services/status/DeviceServer")
+        .expect("couldn't talk to redis");
+    if val.is_empty() {
+        panic!("service status key not found in redis");
+    }
+    let status_update: StatusMessagePack =
+        rmp_serde::from_slice(val.as_slice()).expect("failed to parse status message from Redis");
     let mut extra_labels: MetricLabels = HashMap::from([]);
+    let service_info = status_update.bec_codec.data.info;
+    match service_info {
+        crate::status_message::Info::ServiceInfo(info) => {
+            let versions = info.bec_codec.data.versions.unwrap();
+            extra_labels.insert("bec_lib".into(), versions.bec_lib);
+            extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
+            extra_labels.insert("bec_server".into(), versions.bec_server);
+            extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
+        }
+        _ => todo!(),
+    }
     // extra_labels.extend(get_versions());
     (sample_now(1.into()), Some(extra_labels))
 }
@@ -92,6 +109,7 @@ async fn watchdog_loop(
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     let mut spawner = metric_spawner(tx.clone(), config);
+    interval.tick().await;
 
     loop {
         interval.tick().await;
