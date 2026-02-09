@@ -1,3 +1,13 @@
+# [1.6.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.3...v1.6.0) (2026-02-09)
+
+
+### Features
+
+* add model for service metric message ([b3bf639](https://github.com/bec-project/bec_log_ingestor/commit/b3bf63923d22d3f03261c4678e886ce034e922c0))
+* add reactive error handling to metrics ([912832c](https://github.com/bec-project/bec_log_ingestor/commit/912832ca59d292cdd21f8e020afe3b5da578ada4))
+* allow configuring a default interval per metric ([5ac1333](https://github.com/bec-project/bec_log_ingestor/commit/5ac1333b372a0b561583a49ecf8a232c37662dcf))
+* propagate version metrics to mimir ([13bbbde](https://github.com/bec-project/bec_log_ingestor/commit/13bbbde0f2d701e3936b5e179f3e5e4580f84527))
+
 ## [1.5.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.2...v1.5.3) (2026-01-16)
 
 
