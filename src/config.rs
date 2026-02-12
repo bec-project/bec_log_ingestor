@@ -126,9 +126,9 @@ pub enum DynamicMetricDtype {
 
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
 pub struct DynamicMetric {
-    read_type: RedisReadType,
-    key: String,
-    dtype: DynamicMetricDtype,
+    pub read_type: RedisReadType,
+    pub key: String,
+    pub dtype: DynamicMetricDtype,
 }
 
 #[derive(Clone, Deserialize, Debug)]

@@ -1,5 +1,5 @@
 use crate::{
-    config::{IngestorConfig, RedisConfig},
+    config::{DynamicMetric, IngestorConfig, RedisConfig},
     redis_logs::create_redis_conn,
 };
 
@@ -33,15 +33,32 @@ pub(crate) type SysinfoMetricFunc = Arc<dyn Fn(&mut System) -> MetricFuncResult 
 pub(crate) type RedisMetricFunc = Arc<dyn Fn(&mut Connection) -> MetricFuncResult + Send + Sync>;
 pub(crate) type MetricLabels = HashMap<String, String>;
 pub(crate) type MetricDefaultIntervalSeconds = Option<u32>;
-pub(crate) type MetricDefinition = (MetricFunc, MetricLabels, MetricDefaultIntervalSeconds);
+pub(crate) type StaticMetricDefinition =
+    (StaticMetricFunc, MetricLabels, MetricDefaultIntervalSeconds);
+pub(crate) enum MetricDefinition {
+    Static(StaticMetricDefinition),
+    Dynamic(DynamicMetric),
+}
 pub(crate) type MetricDefinitions = Arc<HashMap<String, MetricDefinition>>;
 pub(crate) type MetricFutures = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
 
 #[derive(Clone)]
-pub(crate) enum MetricFunc {
+pub(crate) enum StaticMetricFunc {
     Simple(SimpleMetricFunc),
     Redis(RedisMetricFunc),
     System(SysinfoMetricFunc),
+}
+
+#[derive(Clone)]
+pub(crate) enum DynamicMetricFunc {
+    Redis(DynamicMetric),
+    RedisPubSub(DynamicMetric),
+}
+
+#[derive(Clone)]
+pub(crate) enum MetricFunc {
+    Static(StaticMetricFunc),
+    Dynamic(DynamicMetricFunc),
 }
 
 // Return a Prometheus Sample struct for the given value with a timestamp of the current UTC time
@@ -65,8 +82,8 @@ pub(crate) fn metric_spawner(
     tx: UnboundedSender<TimeSeries>,
     config: &'static IngestorConfig,
 ) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
-    move |(name, (func, labels, default_interval))| {
-        (
+    move |(name, definition)| match definition {
+        MetricDefinition::Static((func, labels, default_interval)) => (
             name.clone(),
             spawn(metric_future(
                 func.clone(),
@@ -75,7 +92,15 @@ pub(crate) fn metric_spawner(
                 config.redis.clone(),
                 tx.clone(),
             )),
-        )
+        ),
+        MetricDefinition::Dynamic(metric_config) => (
+            name.clone(),
+            spawn(dynamic_metric_future(
+                metric_config.clone(),
+                config.redis.clone(),
+                tx.clone(),
+            )),
+        ),
     }
 }
 
@@ -83,7 +108,7 @@ pub(crate) fn metric_spawner(
 /// hashmap of the associated labels, and returns a loop awaiting the interval ticks which sends a prometheus/mimir
 /// TimeSeries to the channel, ready for the consumer loop in metrics.rs to bundle and send to the database
 #[macro_export]
-macro_rules! transmit_metric_loop {
+macro_rules! polling_metric_loop {
     ($func:expr, ($($args:expr),*), $interval:expr, $tx:expr, $labels:expr) => {
         loop {
             $interval.tick().await;
@@ -114,24 +139,38 @@ macro_rules! transmit_metric_loop {
 
 /// Create a future for a given metric function.
 pub(crate) async fn metric_future(
-    metric_func: MetricFunc,
+    metric_func: StaticMetricFunc,
     labels: HashMap<String, String>,
     mut interval: time::Interval,
     redis_config: RedisConfig,
     tx: UnboundedSender<TimeSeries>,
 ) {
     match metric_func {
-        MetricFunc::Simple(func) => transmit_metric_loop!(func, (), interval, tx, labels.clone()),
-        MetricFunc::Redis(func) => {
+        StaticMetricFunc::Simple(func) => {
+            polling_metric_loop!(func, (), interval, tx, labels.clone())
+        }
+        StaticMetricFunc::Redis(func) => {
             let mut redis = create_redis_conn(&redis_config.url.full_url())
                 .expect("Could not connect to Redis!");
-            transmit_metric_loop!(func, (&mut redis), interval, tx, labels.clone())
+            polling_metric_loop!(func, (&mut redis), interval, tx, labels.clone())
         }
-        MetricFunc::System(func) => {
+        StaticMetricFunc::System(func) => {
             let mut system = System::new_all();
-            transmit_metric_loop!(func, (&mut system), interval, tx, labels.clone())
+            polling_metric_loop!(func, (&mut system), interval, tx, labels.clone())
         }
-    };
+    }
+}
+
+/// Create a future for a given dynamic metric configuration.
+pub(crate) async fn dynamic_metric_future(
+    config: DynamicMetric,
+    redis_config: RedisConfig,
+    tx: UnboundedSender<TimeSeries>,
+) {
+    match &config.read_type {
+        crate::config::RedisReadType::PubSub => todo!(),
+        crate::config::RedisReadType::Poll(metric_interval) => todo!(),
+    }
 }
 
 /// These macros create an entry for the main MetricDefinitions hashmap (name: String, (func: MetricFunc, labels: HM<String, String>, default_interval_seconds: Option<u32>))
@@ -169,7 +208,7 @@ macro_rules! simple_metric {
         (
             stringify!($func).to_string(),
             (
-                $crate::metrics_core::MetricFunc::Simple(std::sync::Arc::new($func) as $crate::metrics_core::SimpleMetricFunc),
+                $crate::metrics_core::StaticMetricFunc::Simple(std::sync::Arc::new($func) as $crate::metrics_core::SimpleMetricFunc),
                 std::collections::HashMap::from([("__name__".to_string(), stringify!($func).to_string()), $(($label_k.into(), $label_v.into())),*]),
                 $int
             )
@@ -181,11 +220,11 @@ macro_rules! system_metric {
     ($func:expr, [ $(($label_k:expr, $label_v:expr)),*], $int:expr) => {
         (
             stringify!($func).to_string(),
-            (
-                $crate::metrics_core::MetricFunc::System(std::sync::Arc::new($func) as $crate::metrics_core::SysinfoMetricFunc),
+            $crate::metrics_core::MetricDefinition::Static((
+                $crate::metrics_core::StaticMetricFunc::System(std::sync::Arc::new($func) as $crate::metrics_core::SysinfoMetricFunc),
                 std::collections::HashMap::from([("__name__".to_string(), stringify!($func).to_string()), $(($label_k.into(), $label_v.into())),*]),
                 $int
-            ),
+            )),
         )
     };
 }
@@ -194,11 +233,11 @@ macro_rules! redis_metric {
     ($func:expr, [ $(($label_k:expr, $label_v:expr)),*], $int:expr) => {
         (
             stringify!($func).to_string(),
-            (
-                $crate::metrics_core::MetricFunc::Redis(std::sync::Arc::new($func) as $crate::metrics_core::RedisMetricFunc),
+            $crate::metrics_core::MetricDefinition::Static((
+                $crate::metrics_core::StaticMetricFunc::Redis(std::sync::Arc::new($func) as $crate::metrics_core::RedisMetricFunc),
                 std::collections::HashMap::from([("__name__".to_string(), stringify!($func).to_string()), $(($label_k.into(), $label_v.into())),*]),
                 $int
-            )
+            ))
         )
     };
 }
@@ -240,16 +279,19 @@ url = \"http://127.0.0.1\"
 
     #[test]
     fn test_system_metric_macro() {
-        let (name, (func, labels, int)): (String, MetricDefinition) =
+        let (name, def): (String, MetricDefinition) =
             system_metric!(test_metric, [("beamline", "x99xa")], None);
+        let MetricDefinition::Static((func, labels, int)) = def else {
+            panic!()
+        };
         assert_eq!(name, "test_metric");
         assert_eq!(labels.get("beamline").unwrap(), "x99xa");
 
         let mut system = System::new();
         match func {
-            MetricFunc::Simple(_) => assert!(false),
-            MetricFunc::Redis(_) => assert!(false),
-            MetricFunc::System(func) => {
+            StaticMetricFunc::Simple(_) => assert!(false),
+            StaticMetricFunc::Redis(_) => assert!(false),
+            StaticMetricFunc::System(func) => {
                 let (samp, extra_labels) = func(&mut system).unwrap();
                 assert!(extra_labels.is_none());
                 assert_eq!(samp.value, 12.34);
@@ -277,10 +319,12 @@ url = \"http://127.0.0.1\"
         let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
         let mut spawner = metric_spawner(tx.clone(), config);
 
-        let (name, (func, labels, int)): (String, MetricDefinition) =
+        let (name, def): (String, MetricDefinition) =
             system_metric!(test_metric, [("beamline", "x99xa")], None);
-
-        let (name, fut) = spawner((&name, &(func, labels, None)));
+        let MetricDefinition::Static((func, labels, int)) = def else {
+            panic!()
+        };
+        let (name, fut) = spawner((&name, &MetricDefinition::Static((func, labels, None))));
         let mut buf: Vec<TimeSeries> = Vec::with_capacity(10);
         rx.recv_many(&mut buf, 10).await;
         fut.abort();
