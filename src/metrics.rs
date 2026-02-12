@@ -136,9 +136,14 @@ async fn watchdog_loop(
                 "ERROR: The following metric coroutines have crashed, restarting them: {finished:?}",
             );
             for name in finished {
-                if let Some((func, labels, int)) = metrics.get(&name) {
-                    let (_, handle) = spawner((&name, &(func.clone(), labels.clone(), *int)));
-                    futs.lock().await.insert(name, handle);
+                if let Some(metric_def) = metrics.get(&name) {
+                    match metric_def {
+                        crate::metrics_core::MetricDefinition::Static(_) => {
+                            let (_, handle) = spawner((&name, metric_def));
+                            futs.lock().await.insert(name, handle);
+                        }
+                        crate::metrics_core::MetricDefinition::Dynamic(_) => todo!(),
+                    }
                 }
             }
         }
