@@ -91,7 +91,7 @@ pub enum MetricInterval {
     Daily(u64),
     Weekly(u64),
 }
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct MetricIntervalsConfig {
     #[serde(default = "HashMap::new")]
     pub intervals: HashMap<String, MetricInterval>,
@@ -111,6 +111,26 @@ impl Into<tokio::time::Interval> for &MetricInterval {
     }
 }
 
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
+pub enum RedisReadType {
+    PubSub,
+    Poll(MetricInterval),
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
+pub enum DynamicMetricDtype {
+    String,
+    Float,
+    Int,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
+pub struct DynamicMetric {
+    read_type: RedisReadType,
+    key: String,
+    dtype: DynamicMetricDtype,
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct MetricsConfig {
     pub user_config_path: Option<std::path::PathBuf>,
@@ -118,6 +138,8 @@ pub struct MetricsConfig {
     pub url: String,
     #[serde(default = "HashMap::new")]
     pub intervals: HashMap<String, MetricInterval>,
+    #[serde(default = "HashMap::new")]
+    pub dynamic: HashMap<String, DynamicMetric>,
 }
 
 impl MetricsConfig {
@@ -172,6 +194,7 @@ pub fn assemble_config(paths: (std::path::PathBuf, Option<std::path::PathBuf>)) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_port() {
@@ -250,7 +273,6 @@ this is not toml
 
     #[test]
     fn test_from_file_error() {
-        use std::path::PathBuf;
         let path = PathBuf::from("/nonexistent/config.toml");
         let result = std::panic::catch_unwind(|| {
             IngestorConfig::from_file(path);
@@ -260,7 +282,6 @@ this is not toml
 
     #[test]
     fn test_from_file_success() {
-        use std::path::PathBuf;
         let path = PathBuf::from("./install/example_config.toml");
         let config = IngestorConfig::from_file(path);
         assert_eq!(config.loki.auth.password, "test-loki-password");
@@ -269,18 +290,38 @@ this is not toml
 
     #[test]
     fn test_assembled_from_file_success() {
-        use std::path::PathBuf;
         let path = PathBuf::from("./install/example_config.toml");
         let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
         let config = assemble_config((path, Some(metrics_path)));
         assert_eq!(config.loki.auth.password, "test-loki-password");
         assert_eq!(config.loki.auth.username, "test-loki");
         assert_eq!(config.metrics.intervals.len(), 5);
+        assert_eq!(config.metrics.dynamic.len(), 1);
+    }
+
+    #[test]
+    fn test_dynamic_from_file() {
+        let path = PathBuf::from("./install/example_config.toml");
+        let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
+        let config = assemble_config((path, Some(metrics_path)));
+        assert_eq!(config.metrics.dynamic.len(), 2);
+
+        let dynamic_metric = config.metrics.dynamic.get("dynamic_metric").unwrap();
+        assert_eq!(dynamic_metric.dtype, DynamicMetricDtype::Float);
+        assert_eq!(
+            dynamic_metric.read_type,
+            RedisReadType::Poll(MetricInterval::Secondly(15))
+        );
+        assert_eq!(dynamic_metric.key, "/user/dynamicmetrics/1");
+
+        let dynamic_metric_2 = config.metrics.dynamic.get("dynamic_metric_2").unwrap();
+        assert_eq!(dynamic_metric_2.dtype, DynamicMetricDtype::String);
+        assert_eq!(dynamic_metric_2.read_type, RedisReadType::PubSub);
+        assert_eq!(dynamic_metric_2.key, "/user/dynamicmetrics/2");
     }
 
     #[test]
     fn test_assembled_from_file_preference_order() {
-        use std::path::PathBuf;
         let path = PathBuf::from("./install/example_config.toml");
         let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
         let config = assemble_config((path, Some(metrics_path)));

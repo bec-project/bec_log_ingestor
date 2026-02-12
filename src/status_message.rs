@@ -3,8 +3,6 @@
 #![allow(clippy::match_single_binding)]
 #![allow(clippy::clone_on_copy)]
 
-use std::collections::HashMap;
-
 #[doc = r" Error types."]
 pub mod error {
     #[doc = r" Error from a `TryFrom` or `FromStr` implementation."]
