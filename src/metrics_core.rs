@@ -28,7 +28,7 @@ pub enum MetricError {
 }
 
 pub(crate) type MetricFuncResult = Result<(Sample, Option<HashMap<String, String>>), MetricError>;
-pub(crate) type SimpleMetricFunc = Arc<dyn Fn() -> MetricFuncResult + Send + Sync>;
+pub(crate) type SimpleMetricFunc = Arc<dyn Fn(&mut ()) -> MetricFuncResult + Send + Sync>;
 pub(crate) type SysinfoMetricFunc = Arc<dyn Fn(&mut System) -> MetricFuncResult + Send + Sync>;
 pub(crate) type RedisMetricFunc = Arc<dyn Fn(&mut Connection) -> MetricFuncResult + Send + Sync>;
 pub(crate) type MetricLabels = HashMap<String, String>;
@@ -47,18 +47,6 @@ pub(crate) enum StaticMetricFunc {
     Simple(SimpleMetricFunc),
     Redis(RedisMetricFunc),
     System(SysinfoMetricFunc),
-}
-
-#[derive(Clone)]
-pub(crate) enum DynamicMetricFunc {
-    Redis(DynamicMetric),
-    RedisPubSub(DynamicMetric),
-}
-
-#[derive(Clone)]
-pub(crate) enum MetricFunc {
-    Static(StaticMetricFunc),
-    Dynamic(DynamicMetricFunc),
 }
 
 // Return a Prometheus Sample struct for the given value with a timestamp of the current UTC time
@@ -109,36 +97,45 @@ pub(crate) fn metric_spawner(
 }
 
 /// Takes a metric function, its arguments, its repetition interval, a clone of the channel transmitter, and an owned
-/// hashmap of the associated labels, and returns a loop awaiting the interval ticks which sends a prometheus/mimir
+/// hashmap of the associated labels, and runs a loop awaiting the interval ticks which sends a prometheus/mimir
 /// TimeSeries to the channel, ready for the consumer loop in metrics.rs to bundle and send to the database
-#[macro_export]
-macro_rules! polling_metric_loop {
-    ($func:expr, ($($args:expr),*), $interval:expr, $tx:expr, $labels:expr) => {
-        loop {
-            $interval.tick().await;
-            let metric_res = $func($($args),*);
-            let (sample, opt_extra_labels) = match metric_res {
-                Err(MetricError::Fatal(msg)) => {panic!("{msg}")},
-                Err(MetricError::Retryable(msg)) => {println!("WARNING: {msg}"); continue},
-                Ok(res) => {
-                    res
-                }
-            };
-            let mut owned_labels = $labels;
-            if let Some(extra_labels) = opt_extra_labels {
-                owned_labels.extend(extra_labels);
+async fn polling_metric_loop<F, Args>(
+    mut func: F,
+    mut args: Args,
+    mut interval: Interval,
+    tx: UnboundedSender<TimeSeries>,
+    labels: &MetricLabels,
+) -> ()
+where
+    F: FnMut(&mut Args) -> MetricFuncResult,
+{
+    loop {
+        interval.tick().await;
+        let metric_res = func(&mut args);
+        let (sample, opt_extra_labels) = match metric_res {
+            Err(MetricError::Fatal(msg)) => {
+                panic!("FATAL: {msg}")
             }
-            if $tx
-                .send(TimeSeries {
-                    labels: labels_from_hashmap(&owned_labels),
-                    samples: vec![sample],
-                })
-                .is_err()
-            {
-                break;
+            Err(MetricError::Retryable(msg)) => {
+                println!("WARNING: {msg}");
+                continue;
             }
+            Ok(res) => res,
+        };
+        let mut owned_labels = labels.clone();
+        if let Some(extra_labels) = opt_extra_labels {
+            owned_labels.extend(extra_labels);
         }
-    };
+        if tx
+            .send(TimeSeries {
+                labels: labels_from_hashmap(&owned_labels),
+                samples: vec![sample],
+            })
+            .is_err()
+        {
+            break;
+        }
+    }
 }
 
 /// Create a future for a given metric function.
@@ -151,16 +148,16 @@ pub(crate) async fn metric_future(
 ) {
     match metric_func {
         StaticMetricFunc::Simple(func) => {
-            polling_metric_loop!(func, (), interval, tx, labels.clone())
+            polling_metric_loop(&*func, (), interval, tx, &labels).await
         }
         StaticMetricFunc::Redis(func) => {
             let mut redis = create_redis_conn(&redis_config.url.full_url())
                 .expect("Could not connect to Redis!");
-            polling_metric_loop!(func, (&mut redis), interval, tx, labels.clone())
+            polling_metric_loop(&*func, redis, interval, tx, &labels).await
         }
         StaticMetricFunc::System(func) => {
             let mut system = System::new_all();
-            polling_metric_loop!(func, (&mut system), interval, tx, labels.clone())
+            polling_metric_loop(&*func, system, interval, tx, &labels).await
         }
     }
 }
@@ -172,7 +169,9 @@ fn parse_error<T: std::fmt::Debug>(config: &DynamicMetric, val: T, detail: Strin
     ))
 }
 
-fn dynamic_polling_metric(redis: &mut Connection, config: &DynamicMetric) -> MetricFuncResult {
+fn dynamic_polling_metric(
+    (redis, config): &mut (&mut Connection, &DynamicMetric),
+) -> MetricFuncResult {
     let val: Vec<u8> = redis.get(&config.key).expect("Unspecified redis error");
     if val.is_empty() {
         Err(MetricError::Retryable(format!(
@@ -215,17 +214,18 @@ pub(crate) async fn dynamic_metric_future(
     match &config.read_type {
         RedisReadType::PubSub => {
             let mut pubsub = redis.as_pubsub();
-            todo!()
+            loop {}
         }
         RedisReadType::Poll(interval_config) => {
             let mut polling_interval = Into::<Interval>::into(interval_config);
-            polling_metric_loop!(
+            polling_metric_loop(
                 dynamic_polling_metric,
                 (&mut redis, &config),
                 polling_interval,
                 tx,
-                labels.clone()
+                &labels,
             )
+            .await
         }
     }
 }
