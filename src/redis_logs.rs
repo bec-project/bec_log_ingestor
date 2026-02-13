@@ -1,4 +1,4 @@
-use crate::config::{IngestorConfig, RedisConfig};
+use crate::config::IngestorConfig;
 use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
 use rmp_serde;

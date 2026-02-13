@@ -1,9 +1,9 @@
 use crate::{
-    config::{DynamicMetric, IngestorConfig, RedisConfig},
+    config::{DynamicMetric, DynamicMetricDtype, IngestorConfig, RedisConfig, RedisReadType},
     redis_logs::create_redis_conn,
 };
 
-use redis::Connection;
+use redis::{Commands, Connection};
 use std::{collections::HashMap, sync::Arc};
 use sysinfo::System;
 use thiserror::Error;
@@ -11,7 +11,7 @@ use tokio::{
     spawn,
     sync::{Mutex, mpsc::UnboundedSender},
     task::JoinHandle,
-    time,
+    time::{self, Interval},
 };
 
 pub mod prometheus {
@@ -96,6 +96,10 @@ pub(crate) fn metric_spawner(
         MetricDefinition::Dynamic(metric_config) => (
             name.clone(),
             spawn(dynamic_metric_future(
+                HashMap::from([
+                    ("__name__".to_string(), name.clone()),
+                    ("beamline".into(), config.loki.beamline_name.to_owned()),
+                ]),
                 metric_config.clone(),
                 config.redis.clone(),
                 tx.clone(),
@@ -161,15 +165,68 @@ pub(crate) async fn metric_future(
     }
 }
 
+fn parse_error<T: std::fmt::Debug>(config: &DynamicMetric, val: T, detail: String) -> MetricError {
+    MetricError::Retryable(format!(
+        "Could not parse dynamically defined metric at: {} as a {} value: {val:?}. Detail: {detail}",
+        config.key, config.dtype
+    ))
+}
+
+fn dynamic_polling_metric(redis: &mut Connection, config: &DynamicMetric) -> MetricFuncResult {
+    let val: Vec<u8> = redis.get(&config.key).expect("Unspecified redis error");
+    if val.is_empty() {
+        Err(MetricError::Retryable(format!(
+            "No value found at dynamically defined key: {:?}",
+            &config.key
+        )))
+    } else {
+        let res_str =
+            str::from_utf8(&val).map_err(|e| parse_error(&config, &val, e.to_string()))?;
+        match config.dtype {
+            crate::config::DynamicMetricDtype::String => Ok((
+                sample_now(1.0),
+                Some(HashMap::from([("value".into(), res_str.into())])),
+            )),
+            crate::config::DynamicMetricDtype::Float => {
+                let res = res_str
+                    .parse::<f64>()
+                    .map_err(|e| parse_error(&config, &res_str, e.to_string()))?;
+                Ok((sample_now(res), None))
+            }
+            crate::config::DynamicMetricDtype::Int => {
+                let res = res_str
+                    .parse::<i64>()
+                    .map_err(|e| parse_error(&config, &res_str, e.to_string()))?;
+                Ok((sample_now(res as f64), None))
+            }
+        }
+    }
+}
+
 /// Create a future for a given dynamic metric configuration.
 pub(crate) async fn dynamic_metric_future(
+    labels: HashMap<String, String>,
     config: DynamicMetric,
     redis_config: RedisConfig,
     tx: UnboundedSender<TimeSeries>,
 ) {
+    let mut redis =
+        create_redis_conn(&redis_config.url.full_url()).expect("Could not connect to Redis!");
     match &config.read_type {
-        crate::config::RedisReadType::PubSub => todo!(),
-        crate::config::RedisReadType::Poll(metric_interval) => todo!(),
+        RedisReadType::PubSub => {
+            let mut pubsub = redis.as_pubsub();
+            todo!()
+        }
+        RedisReadType::Poll(interval_config) => {
+            let mut polling_interval = Into::<Interval>::into(interval_config);
+            polling_metric_loop!(
+                dynamic_polling_metric,
+                (&mut redis, &config),
+                polling_interval,
+                tx,
+                labels.clone()
+            )
+        }
     }
 }
 
@@ -245,11 +302,10 @@ macro_rules! redis_metric {
 #[cfg(test)]
 mod tests {
     use crate::{config::MetricInterval, metrics_core::*};
-    use std::{collections::HashMap, time::Duration};
     use sysinfo::System;
-    use tokio::{sync::mpsc, time::interval};
+    use tokio::sync::mpsc;
 
-    fn test_metric(system: &mut System) -> MetricFuncResult {
+    fn test_metric(_system: &mut System) -> MetricFuncResult {
         Ok((
             Sample {
                 value: 12.34,
@@ -321,10 +377,11 @@ url = \"http://127.0.0.1\"
 
         let (name, def): (String, MetricDefinition) =
             system_metric!(test_metric, [("beamline", "x99xa")], None);
+        // Assert that the type is a static metric definition and then rewrap it
         let MetricDefinition::Static((func, labels, int)) = def else {
             panic!()
         };
-        let (name, fut) = spawner((&name, &MetricDefinition::Static((func, labels, None))));
+        let (_, fut) = spawner((&name, &MetricDefinition::Static((func, labels, None))));
         let mut buf: Vec<TimeSeries> = Vec::with_capacity(10);
         rx.recv_many(&mut buf, 10).await;
         fut.abort();
