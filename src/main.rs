@@ -55,10 +55,12 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
 async fn main_loop(config: &'static IngestorConfig) {
     println!("Starting log ingestor with config: \n {:?}", &config);
 
-    if config.enable_metrics {
+    let metrics = if config.enable_metrics {
         println!("Starting metrics task...");
-        let _metrics = tokio::spawn(metrics_loop(config));
-    }
+        tokio::spawn(metrics_loop(config))
+    } else {
+        tokio::spawn(futures::future::ready(()))
+    };
 
     if config.enable_logging {
         println!("Starting log ingestor task...");
@@ -66,6 +68,8 @@ async fn main_loop(config: &'static IngestorConfig) {
         let producer = tokio::spawn(producer_loop(tx, config));
         consumer_loop(&mut rx, config).await;
         let _ = tokio::join!(producer);
+    } else {
+        _ = tokio::join!(metrics);
     }
 }
 

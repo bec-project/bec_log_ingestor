@@ -100,14 +100,14 @@ pub(crate) fn metric_spawner(
 /// hashmap of the associated labels, and runs a loop awaiting the interval ticks which sends a prometheus/mimir
 /// TimeSeries to the channel, ready for the consumer loop in metrics.rs to bundle and send to the database
 async fn polling_metric_loop<F, Args>(
-    mut func: F,
+    func: F,
     mut args: Args,
     mut interval: Interval,
     tx: UnboundedSender<TimeSeries>,
     labels: &MetricLabels,
 ) -> ()
 where
-    F: FnMut(&mut Args) -> MetricFuncResult,
+    F: Fn(&mut Args) -> MetricFuncResult,
 {
     loop {
         interval.tick().await;
@@ -142,7 +142,7 @@ where
 pub(crate) async fn metric_future(
     metric_func: StaticMetricFunc,
     labels: HashMap<String, String>,
-    mut interval: time::Interval,
+    interval: time::Interval,
     redis_config: RedisConfig,
     tx: UnboundedSender<TimeSeries>,
 ) {
@@ -151,22 +151,47 @@ pub(crate) async fn metric_future(
             polling_metric_loop(&*func, (), interval, tx, &labels).await
         }
         StaticMetricFunc::Redis(func) => {
-            let mut redis = create_redis_conn(&redis_config.url.full_url())
+            let redis = create_redis_conn(&redis_config.url.full_url())
                 .expect("Could not connect to Redis!");
             polling_metric_loop(&*func, redis, interval, tx, &labels).await
         }
         StaticMetricFunc::System(func) => {
-            let mut system = System::new_all();
+            let system = System::new_all();
             polling_metric_loop(&*func, system, interval, tx, &labels).await
         }
     }
 }
 
-fn parse_error<T: std::fmt::Debug>(config: &DynamicMetric, val: T, detail: String) -> MetricError {
+fn parsing_error<T: std::fmt::Debug>(
+    config: &DynamicMetric,
+    val: T,
+    detail: String,
+) -> MetricError {
     MetricError::Retryable(format!(
         "Could not parse dynamically defined metric at: {} as a {} value: {val:?}. Detail: {detail}",
         config.key, config.dtype
     ))
+}
+
+fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult {
+    match config.dtype {
+        DynamicMetricDtype::String => Ok((
+            sample_now(1.0),
+            Some(HashMap::from([("value".into(), redis_value)])),
+        )),
+        DynamicMetricDtype::Float => {
+            let res = redis_value
+                .parse::<f64>()
+                .map_err(|e| parsing_error(&config, &redis_value, e.to_string()))?;
+            Ok((sample_now(res), None))
+        }
+        DynamicMetricDtype::Int => {
+            let res = redis_value
+                .parse::<i64>()
+                .map_err(|e| parsing_error(&config, &redis_value, e.to_string()))?;
+            Ok((sample_now(res as f64), None))
+        }
+    }
 }
 
 fn dynamic_polling_metric(
@@ -180,25 +205,8 @@ fn dynamic_polling_metric(
         )))
     } else {
         let res_str =
-            str::from_utf8(&val).map_err(|e| parse_error(&config, &val, e.to_string()))?;
-        match config.dtype {
-            crate::config::DynamicMetricDtype::String => Ok((
-                sample_now(1.0),
-                Some(HashMap::from([("value".into(), res_str.into())])),
-            )),
-            crate::config::DynamicMetricDtype::Float => {
-                let res = res_str
-                    .parse::<f64>()
-                    .map_err(|e| parse_error(&config, &res_str, e.to_string()))?;
-                Ok((sample_now(res), None))
-            }
-            crate::config::DynamicMetricDtype::Int => {
-                let res = res_str
-                    .parse::<i64>()
-                    .map_err(|e| parse_error(&config, &res_str, e.to_string()))?;
-                Ok((sample_now(res as f64), None))
-            }
-        }
+            str::from_utf8(&val).map_err(|e| parsing_error(&config, &val, e.to_string()))?;
+        parse_redis_value(config, res_str.into())
     }
 }
 
@@ -213,11 +221,41 @@ pub(crate) async fn dynamic_metric_future(
         create_redis_conn(&redis_config.url.full_url()).expect("Could not connect to Redis!");
     match &config.read_type {
         RedisReadType::PubSub => {
+            println!("initing pubsub metric");
             let mut pubsub = redis.as_pubsub();
-            loop {}
+            pubsub
+                .subscribe(&config.key)
+                .expect("Could not subscribe to channel!");
+            loop {
+                let msg = pubsub.get_message().expect("Failed to get message!");
+                let payload: String = msg.get_payload().expect("Failed to extract payload!");
+                let (sample, opt_extra_labels) = match parse_redis_value(&config, payload.into()) {
+                    Err(MetricError::Fatal(msg)) => {
+                        panic!("FATAL: {msg}")
+                    }
+                    Err(MetricError::Retryable(msg)) => {
+                        println!("WARNING: {msg}");
+                        continue;
+                    }
+                    Ok(res) => res,
+                };
+                let mut owned_labels = labels.clone();
+                if let Some(extra_labels) = opt_extra_labels {
+                    owned_labels.extend(extra_labels);
+                }
+                if tx
+                    .send(TimeSeries {
+                        labels: labels_from_hashmap(&owned_labels),
+                        samples: vec![sample],
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
         }
         RedisReadType::Poll(interval_config) => {
-            let mut polling_interval = Into::<Interval>::into(interval_config);
+            let polling_interval = Into::<Interval>::into(interval_config);
             polling_metric_loop(
                 dynamic_polling_metric,
                 (&mut redis, &config),
