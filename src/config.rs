@@ -117,11 +117,24 @@ pub enum RedisReadType {
     Poll(MetricInterval),
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Clone, Deserialize, Debug, Serialize, PartialEq)]
 pub enum DynamicMetricDtype {
     String,
     Float,
     Int,
+}
+impl std::fmt::Display for DynamicMetricDtype {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match &self {
+                DynamicMetricDtype::String => "String",
+                DynamicMetricDtype::Float => "Float",
+                DynamicMetricDtype::Int => "Integer",
+            }
+        )
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
@@ -157,11 +170,19 @@ impl MetricsConfig {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct IngestorConfig {
     pub redis: RedisConfig,
     pub loki: LokiConfig,
     pub metrics: MetricsConfig,
+    #[serde(default = "default_true")]
+    pub enable_metrics: bool,
+    #[serde(default = "default_true")]
+    pub enable_logging: bool,
 }
 impl FromTomlFile for IngestorConfig {}
 

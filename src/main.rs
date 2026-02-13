@@ -55,13 +55,18 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
 async fn main_loop(config: &'static IngestorConfig) {
     println!("Starting log ingestor with config: \n {:?}", &config);
 
-    let _metrics = tokio::spawn(metrics_loop(config));
+    if config.enable_metrics {
+        println!("Starting metrics task...");
+        let _metrics = tokio::spawn(metrics_loop(config));
+    }
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
-    let producer = tokio::spawn(producer_loop(tx, config));
-
-    consumer_loop(&mut rx, config).await;
-    let _ = tokio::join!(producer);
+    if config.enable_logging {
+        println!("Starting log ingestor task...");
+        let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
+        let producer = tokio::spawn(producer_loop(tx, config));
+        consumer_loop(&mut rx, config).await;
+        let _ = tokio::join!(producer);
+    }
 }
 
 #[tokio::main]

@@ -1,8 +1,8 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricDefinitions, MetricError, MetricFuncResult, MetricFutures, MetricLabels,
-        metric_spawner,
+        MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult, MetricFutures,
+        MetricLabels, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
@@ -42,8 +42,12 @@ fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
             "No status update found at {key}"
         )));
     }
-    let status_update: StatusMessagePack =
-        rmp_serde::from_slice(val.as_slice()).expect("failed to parse status message from Redis");
+    let status_update: StatusMessagePack = rmp_serde::from_slice(val.as_slice()).map_err(|e| {
+        MetricError::Retryable(format!(
+            "Failed to parse status message from redis: {}",
+            e.to_string()
+        ))
+    })?;
     let mut extra_labels: MetricLabels = HashMap::from([]);
     let service_info = status_update.bec_codec.data.info;
     match service_info {
@@ -78,12 +82,13 @@ fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
 
 /// Defines the list of all metrics to run
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
-    Arc::new(HashMap::from([
+    // set up the statically defined metrics first
+    let mut metrics = HashMap::from([
         // Redis metrics
         redis_metric!(
             deployment,
             [("beamline", &config.loki.beamline_name)],
-            Some(600)
+            Some(60)
         ),
         // System info metrics
         system_metric!(
@@ -101,7 +106,16 @@ fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
             [("beamline", &config.loki.beamline_name)],
             None
         ),
-    ]))
+    ]);
+    // load the dynamically defined metrics from the config
+    metrics.extend(
+        config
+            .metrics
+            .dynamic
+            .iter()
+            .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm.clone()))),
+    );
+    Arc::new(metrics)
 }
 
 //
