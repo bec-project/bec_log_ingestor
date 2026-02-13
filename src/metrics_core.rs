@@ -217,12 +217,13 @@ pub(crate) async fn dynamic_metric_future(
     redis_config: RedisConfig,
     tx: UnboundedSender<TimeSeries>,
 ) {
-    let mut redis =
-        create_redis_conn(&redis_config.url.full_url()).expect("Could not connect to Redis!");
+    let redis = redis::Client::open(redis_config.url.full_url())
+        .expect("Could not connect to Redis!")
+        .get_connection();
+
     match &config.read_type {
         RedisReadType::PubSub => {
-            println!("initing pubsub metric");
-            let mut pubsub = redis.as_pubsub();
+            let mut pubsub = redis();
             pubsub
                 .subscribe(&config.key)
                 .expect("Could not subscribe to channel!");
@@ -239,7 +240,8 @@ pub(crate) async fn dynamic_metric_future(
                     }
                     Ok(res) => res,
                 };
-                let mut owned_labels = labels.clone();
+                let mut owned_labels = dbg!(labels.clone());
+                dbg!(sample);
                 if let Some(extra_labels) = opt_extra_labels {
                     owned_labels.extend(extra_labels);
                 }
@@ -250,12 +252,13 @@ pub(crate) async fn dynamic_metric_future(
                     })
                     .is_err()
                 {
+                    println!("TASK-FATAL: error transmitting metric to publisher channel");
                     break;
                 }
             }
         }
         RedisReadType::Poll(interval_config) => {
-            let polling_interval = Into::<Interval>::into(interval_config);
+            let polling_interval: Interval = interval_config.into();
             polling_metric_loop(
                 dynamic_polling_metric,
                 (&mut redis, &config),
