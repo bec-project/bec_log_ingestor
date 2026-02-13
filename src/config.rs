@@ -144,6 +144,12 @@ pub struct DynamicMetric {
     pub dtype: DynamicMetricDtype,
 }
 
+fn default_watchdog_interval() -> MetricInterval {
+    MetricInterval::Secondly(60)
+}
+fn default_publish_interval() -> MetricInterval {
+    MetricInterval::Secondly(1)
+}
 #[derive(Clone, Deserialize, Debug)]
 pub struct MetricsConfig {
     pub user_config_path: Option<std::path::PathBuf>,
@@ -153,6 +159,10 @@ pub struct MetricsConfig {
     pub intervals: HashMap<String, MetricInterval>,
     #[serde(default = "HashMap::new")]
     pub dynamic: HashMap<String, DynamicMetric>,
+    #[serde(default = "default_watchdog_interval")]
+    pub watchdog_interval: MetricInterval,
+    #[serde(default = "default_publish_interval")]
+    pub publish_interval: MetricInterval,
 }
 
 impl MetricsConfig {

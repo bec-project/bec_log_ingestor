@@ -21,7 +21,7 @@ use tokio::{
         Mutex,
         mpsc::{self, UnboundedSender},
     },
-    time::sleep,
+    time::{Interval, sleep},
 };
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -129,13 +129,14 @@ async fn watchdog_loop(
     tx: UnboundedSender<TimeSeries>,
     config: &'static IngestorConfig,
 ) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let mut interval: Interval = (&config.metrics.watchdog_interval).into();
     let mut spawner = metric_spawner(tx.clone(), config);
     interval.tick().await;
 
     loop {
         interval.tick().await;
-
+        println!("Watchdog checking {:?}", futs.lock().await.keys());
+        dbg!(tx.strong_count());
         let finished: Vec<String> = {
             futs.lock()
                 .await
@@ -161,6 +162,7 @@ async fn watchdog_loop(
                 }
             }
         }
+        println!("Watchdog done.");
     }
 }
 
@@ -172,8 +174,11 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
     let mut snap_encoder = Encoder::new();
     let mut retries: u8 = 0;
     let client = reqwest::Client::new();
+    let mut interval: Interval = (&config.publish_interval).into();
 
     loop {
+        interval.tick().await;
+        println!("DEBUG: publishing metrics to Mimir");
         let open = rx.recv_many(&mut buffer, chunk_size).await;
         if open == 0 {
             break;
