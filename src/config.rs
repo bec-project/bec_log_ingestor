@@ -327,7 +327,7 @@ this is not toml
         assert_eq!(config.loki.auth.password, "test-loki-password");
         assert_eq!(config.loki.auth.username, "test-loki");
         assert_eq!(config.metrics.intervals.len(), 5);
-        assert_eq!(config.metrics.dynamic.len(), 1);
+        assert_eq!(config.metrics.dynamic.len(), 2);
     }
 
     #[test]

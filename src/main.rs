@@ -76,5 +76,8 @@ async fn main_loop(config: &'static IngestorConfig) {
 #[tokio::main]
 async fn main() {
     let config = Box::leak(Box::new(assemble_config(config_paths())));
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
     main_loop(config).await
 }
