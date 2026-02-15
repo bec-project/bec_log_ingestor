@@ -1,10 +1,10 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult, MetricFutures,
-        MetricLabels, metric_spawner,
+        MetricDefinition, MetricDefinitions, MetricError, MetricFutures, MetricLabels,
+        PinMetricResultFut, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
-        sample_now,
+        sample_now, sync_metric,
     },
     redis_metric,
     status_message::StatusMessagePack,
@@ -12,7 +12,7 @@ use crate::{
 };
 
 use prost::Message;
-use redis::Commands;
+use redis::{AsyncCommands, aio::MultiplexedConnection};
 use snap::raw::Encoder;
 use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
@@ -32,52 +32,56 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
-    let key = "user/services/status/DeviceServer";
-    let val: Vec<u8> = redis.get(&key).map_err(|e| {
-        MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
-    })?;
-    if val.is_empty() {
-        return Err(MetricError::Retryable(format!(
-            "No status update found at {key}"
-        )));
-    }
-    let status_update: StatusMessagePack = rmp_serde::from_slice(val.as_slice()).map_err(|e| {
-        MetricError::Retryable(format!(
-            "Failed to parse status message from redis: {}",
-            e.to_string()
-        ))
-    })?;
-    let mut extra_labels: MetricLabels = HashMap::from([]);
-    let service_info = status_update.bec_codec.data.info;
-    match service_info {
-        crate::status_message::Info::ServiceInfo(info) => {
-            let versions = info.bec_codec.data.versions.unwrap();
-            extra_labels.insert("bec_lib".into(), versions.bec_lib);
-            extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
-            extra_labels.insert("bec_server".into(), versions.bec_server);
-            extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
-        }
-        _ => {
-            return Err(MetricError::Fatal(format!(
-                "Status update {service_info:?} contained malformed ServiceInfo"
+fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
+    Box::pin(async move {
+        let key = "user/services/status/DeviceServer";
+        let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
+            MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
+        })?;
+        if val.is_empty() {
+            return Err(MetricError::Retryable(format!(
+                "No status update found at {key}"
             )));
         }
-    }
-    // extra_labels.extend(get_versions());
-    Ok((sample_now(1.into()), Some(extra_labels)))
+        let status_update: StatusMessagePack =
+            rmp_serde::from_slice(val.as_slice()).map_err(|e| {
+                MetricError::Retryable(format!(
+                    "Failed to parse status message from redis: {}",
+                    e.to_string()
+                ))
+            })?;
+        let mut extra_labels: MetricLabels = HashMap::from([]);
+        let service_info = status_update.bec_codec.data.info;
+        match service_info {
+            crate::status_message::Info::ServiceInfo(info) => {
+                let versions = info.bec_codec.data.versions.unwrap();
+                extra_labels.insert("bec_lib".into(), versions.bec_lib);
+                extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
+                extra_labels.insert("bec_server".into(), versions.bec_server);
+                extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
+            }
+            _ => {
+                return Err(MetricError::Fatal(format!(
+                    "Status update {service_info:?} contained malformed ServiceInfo"
+                )));
+            }
+        }
+        // extra_labels.extend(get_versions());
+        Ok((sample_now(1.into()), Some(extra_labels)))
+    })
 }
 
 // System info metrics
-fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
+fn cpu_usage_percent(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    Ok((sample_now(system.global_cpu_usage().into()), None))
+    let usage: f64 = system.global_cpu_usage().into();
+    sync_metric(Ok((sample_now(usage), None)))
 }
-fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
-    Ok((sample_now(system.used_memory() as f64), None))
+fn ram_usage_bytes(system: &mut System) -> PinMetricResultFut<'_> {
+    sync_metric(Ok((sample_now(system.used_memory() as f64), None)))
 }
-fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
-    Ok((sample_now(system.available_memory() as f64), None))
+fn ram_available_bytes(system: &mut System) -> PinMetricResultFut<'_> {
+    sync_metric(Ok((sample_now(system.available_memory() as f64), None)))
 }
 
 /// Defines the list of all metrics to run
@@ -128,9 +132,10 @@ async fn watchdog_loop(
     metrics: MetricDefinitions,
     tx: UnboundedSender<TimeSeries>,
     config: &'static IngestorConfig,
+    redis: MultiplexedConnection,
 ) {
     let mut interval: Interval = (&config.metrics.watchdog_interval).into();
-    let mut spawner = metric_spawner(tx.clone(), config);
+    let mut spawner = metric_spawner(tx.clone(), config.clone(), redis);
     interval.tick().await;
 
     loop {
@@ -238,13 +243,26 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
 pub async fn metrics_loop(config: &'static IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
 
+    let client =
+        redis::Client::open(config.redis.url.full_url()).expect("Failed to connect to redis!");
+    let redis = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("Failed to connect to redis!");
     let metrics = metric_definitions(&config);
-    let spawner = metric_spawner(tx.clone(), config);
+    let spawner = metric_spawner(tx.clone(), config.clone(), redis.clone());
+
     let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));
 
     let watchdog = {
         let futs = Arc::clone(&futs);
-        tokio::spawn(watchdog_loop(futs, metrics, tx.clone(), config))
+        tokio::spawn(watchdog_loop(
+            futs,
+            metrics,
+            tx.clone(),
+            config,
+            redis.clone(),
+        ))
     };
 
     consumer_loop(&mut rx, config.metrics.clone()).await;
