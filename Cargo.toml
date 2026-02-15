@@ -24,7 +24,7 @@ post_install_script_flags = 0b100
 [dependencies]
 chrono = "0.4.43"
 clap = { version = "4.5.58", features = ["derive"] }
-futures = "0.3.31"
+futures = "0.3.32"
 prost = "0.14.3"
 redis = { version = "0.32.7", features = ["tokio-rustls-comp"] }
 reqwest = { version = "0.13.2", features = ["json"] }
