@@ -2,7 +2,6 @@ use crate::config::{
     DynamicMetric, DynamicMetricDtype, IngestorConfig, RedisConfig, RedisReadType,
 };
 
-use async_trait::async_trait;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use std::{collections::HashMap, sync::Arc};
 use sysinfo::System;
@@ -27,74 +26,39 @@ pub enum MetricError {
     Fatal(String),
 }
 
-#[async_trait]
-pub trait AsyncFnMut<A, R>: Send + Sync {
-    async fn call(&self, args: A) -> R;
+#[dynosaur::dynosaur(pub DynAsyncMetricFn = dyn(box) AsyncMetricFn)]
+pub trait AsyncMetricFn<A>: Send + Sync {
+    fn call(&self, args: &mut A) -> impl Future<Output = MetricFuncResult> + Send + Sync;
 }
-
-#[async_trait]
-impl<F, A, Fut, R> AsyncFnMut<A, R> for F
-where
-    F: Send + Sync + Fn(A) -> Fut,
-    Fut: std::future::Future<Output = R> + Send,
-    A: Send,
-    R: Send,
-{
-    async fn call(&self, args: A) -> R {
-        (self)(args).await
-    }
-}
-#[async_trait]
-pub trait RedisMetric: Send + Sync {
-    async fn call(&self, arg: MultiplexedConnection) -> MetricFuncResult;
-}
-#[async_trait]
-impl<F, Fut> RedisMetric for F
-where
-    F: Send + Sync + Fn(MultiplexedConnection) -> Fut,
-    Fut: std::future::Future<Output = MetricFuncResult> + Send,
-{
-    async fn call(&self, arg: MultiplexedConnection) -> MetricFuncResult {
-        (self)(arg).await
-    }
-}
-
-#[async_trait]
-pub trait SystemMetric: Send + Sync {
-    async fn call(&self, arg: &mut System) -> MetricFuncResult;
-}
-#[async_trait]
-impl<F, Fut> SystemMetric for F
-where
-    F: Send + Sync + Fn(&mut System) -> Fut,
-    Fut: std::future::Future<Output = MetricFuncResult> + Send,
-{
-    async fn call(&self, arg: &mut System) -> MetricFuncResult {
-        (self)(arg).await
+impl<A: Send + Sync> AsyncMetricFn<A> for dyn Fn(&mut A) -> MetricFuncResult + Send + Sync {
+    async fn call(&self, args: &mut A) -> MetricFuncResult {
+        (self)(args)
     }
 }
 
 pub(crate) type MetricFuncResult = Result<(Sample, Option<HashMap<String, String>>), MetricError>;
-pub(crate) type SimpleMetricFunc = Arc<dyn SimpleMetric>;
-pub(crate) type SysinfoMetricFunc = Arc<dyn SystemMetric>;
-pub(crate) type RedisMetricFunc = Arc<dyn RedisMetric>;
-pub(crate) type WrappedMetricFunc = Arc<dyn AsyncFnMut>;
+pub(crate) type SimpleMetricFunc<'a> = Arc<DynAsyncMetricFn<'a, ()>>;
+pub(crate) type SysinfoMetricFunc<'a> = Arc<DynAsyncMetricFn<'a, System>>;
+pub(crate) type RedisMetricFunc<'a> = Arc<DynAsyncMetricFn<'a, MultiplexedConnection>>;
 pub(crate) type MetricLabels = HashMap<String, String>;
 pub(crate) type MetricDefaultIntervalSeconds = Option<u32>;
-pub(crate) type StaticMetricDefinition =
-    (StaticMetricFunc, MetricLabels, MetricDefaultIntervalSeconds);
-pub(crate) enum MetricDefinition {
-    Static(StaticMetricDefinition),
+pub(crate) type StaticMetricDefinition<'a> = (
+    StaticMetricFunc<'a>,
+    MetricLabels,
+    MetricDefaultIntervalSeconds,
+);
+pub(crate) enum MetricDefinition<'a> {
+    Static(StaticMetricDefinition<'a>),
     Dynamic(DynamicMetric),
 }
-pub(crate) type MetricDefinitions = Arc<HashMap<String, MetricDefinition>>;
+pub(crate) type MetricDefinitions<'a> = Arc<HashMap<String, MetricDefinition<'a>>>;
 pub(crate) type MetricFutures = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
 
 #[derive(Clone)]
-pub(crate) enum StaticMetricFunc {
-    Simple(SimpleMetricFunc),
-    Redis(RedisMetricFunc),
-    System(SysinfoMetricFunc),
+pub(crate) enum StaticMetricFunc<'a> {
+    Simple(SimpleMetricFunc<'a>),
+    Redis(RedisMetricFunc<'a>),
+    System(SysinfoMetricFunc<'a>),
 }
 
 // Return a Prometheus Sample struct for the given value with a timestamp of the current UTC time
@@ -118,7 +82,7 @@ pub(crate) fn metric_spawner(
     tx: UnboundedSender<TimeSeries>,
     config: &'static IngestorConfig,
     redis: MultiplexedConnection,
-) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
+) -> impl FnMut((&String, &'static MetricDefinition)) -> (String, JoinHandle<()>) {
     move |(name, definition)| match definition {
         MetricDefinition::Static((func, labels, default_interval)) => (
             name.clone(),
@@ -149,19 +113,16 @@ pub(crate) fn metric_spawner(
 /// Takes a metric function, its arguments, its repetition interval, a clone of the channel transmitter, and an owned
 /// hashmap of the associated labels, and runs a loop awaiting the interval ticks which sends a prometheus/mimir
 /// TimeSeries to the channel, ready for the consumer loop in metrics.rs to bundle and send to the database
-async fn polling_metric_loop<F, Args>(
-    func: F,
+async fn polling_metric_loop<Args>(
+    func: Arc<DynAsyncMetricFn<'_, Args>>,
     mut args: Args,
     mut interval: Interval,
     tx: UnboundedSender<TimeSeries>,
     labels: &MetricLabels,
-) -> ()
-where
-    F: AsyncFn(&mut Args) -> MetricFuncResult,
-{
+) -> () {
     loop {
         interval.tick().await;
-        let metric_res = func(&mut args).await;
+        let metric_res = func.call(&mut args).await;
         let (sample, opt_extra_labels) = match metric_res {
             Err(MetricError::Fatal(msg)) => {
                 panic!("FATAL: {msg}")
@@ -190,7 +151,7 @@ where
 
 /// Create a future for a given metric function.
 pub(crate) async fn metric_future(
-    metric_func: StaticMetricFunc,
+    metric_func: StaticMetricFunc<'_>,
     labels: HashMap<String, String>,
     interval: time::Interval,
     redis: MultiplexedConnection,
@@ -201,11 +162,10 @@ pub(crate) async fn metric_future(
             polling_metric_loop(func, (), interval, tx, &labels).await
         }
         StaticMetricFunc::Redis(func) => {
-            polling_metric_loop(&*func, redis, interval, tx, &labels).await
+            polling_metric_loop(func, redis, interval, tx, &labels).await
         }
         StaticMetricFunc::System(func) => {
-            let system = System::new_all();
-            polling_metric_loop(&*func, system, interval, tx, &labels).await
+            polling_metric_loop(func, System::new_all(), interval, tx, &labels).await
         }
     }
 }
@@ -308,8 +268,10 @@ pub(crate) async fn dynamic_metric_future(
         }
         RedisReadType::Poll(interval_config) => {
             let polling_interval: Interval = interval_config.into();
+            let func: Arc<DynAsyncMetricFn<'_, _>> =
+                DynAsyncMetricFn::new_arc(dynamic_polling_metric);
             polling_metric_loop(
-                dynamic_polling_metric,
+                func,
                 (redis.clone(), &config),
                 polling_interval,
                 tx,
@@ -463,7 +425,7 @@ url = \"http://127.0.0.1\"
             .intervals
             .insert("test_metric".into(), MetricInterval::Millis(1));
         let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
-        let mut spawner = metric_spawner(tx.clone(), config);
+        let mut spawner = metric_spawner(tx.clone(), config, todo!());
 
         let (name, def): (String, MetricDefinition) =
             system_metric!(test_metric, [("beamline", "x99xa")], None);

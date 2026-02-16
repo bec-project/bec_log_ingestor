@@ -1,14 +1,12 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult, MetricFutures,
-        MetricLabels, metric_spawner,
+        DynAsyncMetricFn, MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult,
+        MetricFutures, MetricLabels, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
-    redis_metric,
     status_message::StatusMessagePack,
-    system_metric,
 };
 
 use prost::Message;
@@ -32,7 +30,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-async fn deployment(mut redis: MultiplexedConnection) -> MetricFuncResult {
+async fn deployment(redis: &mut MultiplexedConnection) -> MetricFuncResult {
     let key = "user/services/status/DeviceServer";
     let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
         MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
@@ -68,6 +66,10 @@ async fn deployment(mut redis: MultiplexedConnection) -> MetricFuncResult {
     Ok((sample_now(1.into()), Some(extra_labels)))
 }
 
+fn test_deployment(A: &mut ()) -> impl Future<Output = MetricFuncResult> + Sync + Send {
+    deployment(todo!())
+}
+
 // System info metrics
 async fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
@@ -83,38 +85,40 @@ async fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
 /// Defines the list of all metrics to run
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
     // set up the statically defined metrics first
+    let func = DynAsyncMetricFn::new_arc(test_deployment);
     let mut metrics = HashMap::from([
+        ("deployment".into(), (todo!())),
         // Redis metrics
-        redis_metric!(
-            deployment,
-            [("beamline", &config.loki.beamline_name)],
-            Some(60)
-        ),
-        // System info metrics
-        system_metric!(
-            cpu_usage_percent,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
-        system_metric!(
-            ram_usage_bytes,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
-        system_metric!(
-            ram_available_bytes,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
+        // redis_metric!(
+        //     deployment,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     Some(60)
+        // ),
+        // // System info metrics
+        // system_metric!(
+        //     cpu_usage_percent,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     None
+        // ),
+        // system_metric!(
+        //     ram_usage_bytes,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     None
+        // ),
+        // system_metric!(
+        //     ram_available_bytes,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     None
+        // ),
     ]);
     // load the dynamically defined metrics from the config
-    metrics.extend(
-        config
-            .metrics
-            .dynamic
-            .iter()
-            .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm.clone()))),
-    );
+    // metrics.extend(
+    //     config
+    //         .metrics
+    //         .dynamic
+    //         .iter()
+    //         .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm.clone()))),
+    // );
     Arc::new(metrics)
 }
 
@@ -125,7 +129,7 @@ fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
 /// Checks the running futures for any that have failed and attempts to restart them, once per minute.
 async fn watchdog_loop(
     futs: MetricFutures,
-    metrics: MetricDefinitions,
+    metrics: MetricDefinitions<'_>,
     tx: UnboundedSender<TimeSeries>,
     config: &'static IngestorConfig,
     redis: MultiplexedConnection,
