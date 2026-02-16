@@ -12,7 +12,7 @@ use crate::{
 };
 
 use prost::Message;
-use redis::Commands;
+use redis::{AsyncCommands, Commands, aio::MultiplexedConnection};
 use snap::raw::Encoder;
 use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
@@ -32,9 +32,9 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
+async fn deployment(mut redis: MultiplexedConnection) -> MetricFuncResult {
     let key = "user/services/status/DeviceServer";
-    let val: Vec<u8> = redis.get(&key).map_err(|e| {
+    let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
         MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
     })?;
     if val.is_empty() {
@@ -69,14 +69,14 @@ fn deployment(redis: &mut redis::Connection) -> MetricFuncResult {
 }
 
 // System info metrics
-fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
+async fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
     Ok((sample_now(system.global_cpu_usage().into()), None))
 }
-fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
+async fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
     Ok((sample_now(system.used_memory() as f64), None))
 }
-fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
+async fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
     Ok((sample_now(system.available_memory() as f64), None))
 }
 
@@ -128,9 +128,10 @@ async fn watchdog_loop(
     metrics: MetricDefinitions,
     tx: UnboundedSender<TimeSeries>,
     config: &'static IngestorConfig,
+    redis: MultiplexedConnection,
 ) {
     let mut interval: Interval = (&config.metrics.watchdog_interval).into();
-    let mut spawner = metric_spawner(tx.clone(), config);
+    let mut spawner = metric_spawner(tx.clone(), config, redis);
     interval.tick().await;
 
     loop {
@@ -238,13 +239,26 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
 pub async fn metrics_loop(config: &'static IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
 
+    let client =
+        redis::Client::open(config.redis.url.full_url()).expect("Failed to connect to redis!");
+    let redis = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("Failed to connect to redis!");
     let metrics = metric_definitions(&config);
-    let spawner = metric_spawner(tx.clone(), config);
+    let spawner = metric_spawner(tx.clone(), config, redis.clone());
+
     let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));
 
     let watchdog = {
         let futs = Arc::clone(&futs);
-        tokio::spawn(watchdog_loop(futs, metrics, tx.clone(), config))
+        tokio::spawn(watchdog_loop(
+            futs,
+            metrics,
+            tx.clone(),
+            config,
+            redis.clone(),
+        ))
     };
 
     consumer_loop(&mut rx, config.metrics.clone()).await;
