@@ -71,7 +71,7 @@ async fn deployment(redis: &mut MultiplexedConnection) -> MetricFuncResult {
 // System info metrics
 fn cpu_usage_percent(
     system: &mut System,
-) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + Sync>> {
+) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
     let usage: f64 = system.global_cpu_usage().into();
     let result = Ok((sample_now(usage), None));

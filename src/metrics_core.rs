@@ -29,16 +29,16 @@ pub enum MetricError {
 
 // #[async_trait]
 pub trait AsyncFnMut<A>: Send + Sync {
-    fn call(&self, args: &mut A) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + Sync>>;
+    fn call(&self, args: &mut A) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>>;
 }
 
 // #[async_trait]
 impl<F, A> AsyncFnMut<A> for F
 where
-    F: Fn(&mut A) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + Sync>> + Send + Sync,
+    F: Fn(&mut A) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>> + Send + Sync,
     A: Send,
 {
-    fn call(&self, args: &mut A) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + Sync>> {
+    fn call(&self, args: &mut A) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>> {
         (self)(args)
     }
 }
@@ -207,17 +207,17 @@ fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncR
 }
 
 fn sync_get(
-    redis: &mut MultiplexedConnection,
+    mut redis: MultiplexedConnection,
     key: String,
-) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, RedisError>> + Send + Sync>> {
+) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, RedisError>> + Send>> {
     Box::pin(async move { redis.get(key).await })
 }
 
-fn dynamic_polling_metric<'a>(
-    (redis, config): &'a mut (MultiplexedConnection, &'static DynamicMetric),
-) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + Sync + 'a>> {
+fn dynamic_polling_metric(
+    (redis, config): &mut (MultiplexedConnection, DynamicMetric),
+) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>> {
     Box::pin(async move {
-        let val: Vec<u8> = sync_get(redis, (&config.key).to_owned())
+        let val: Vec<u8> = sync_get(redis.clone(), (&config.key).to_owned())
             .await
             .expect("Unspecified redis error");
         if val.is_empty() {
@@ -282,7 +282,7 @@ pub(crate) async fn dynamic_metric_future(
             let polling_interval: Interval = interval_config.into();
             polling_metric_loop(
                 Arc::new(dynamic_polling_metric),
-                (redis.clone(), &config),
+                (redis.clone(), config),
                 polling_interval,
                 tx,
                 labels,
