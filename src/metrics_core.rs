@@ -127,7 +127,7 @@ async fn polling_metric_loop<Args>(
 ) -> () {
     loop {
         interval.tick().await;
-        let metric_res = Box::pin(func.call(&mut args)).await;
+        let metric_res = func.call(&mut args).await;
         let (sample, opt_extra_labels) = match metric_res {
             Err(MetricError::Fatal(msg)) => {
                 panic!("FATAL: {msg}")
@@ -213,9 +213,9 @@ fn sync_get(
     Box::pin(async move { redis.get(key).await })
 }
 
-fn dynamic_polling_metric(
-    (redis, config): &mut (MultiplexedConnection, DynamicMetric),
-) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>> {
+fn dynamic_polling_metric<'a>(
+    (redis, config): &'a mut (MultiplexedConnection, DynamicMetric),
+) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + 'a>> {
     Box::pin(async move {
         let val: Vec<u8> = sync_get(redis.clone(), (&config.key).to_owned())
             .await
@@ -280,14 +280,17 @@ pub(crate) async fn dynamic_metric_future(
         }
         RedisReadType::Poll(interval_config) => {
             let polling_interval: Interval = interval_config.into();
-            polling_metric_loop(
-                Arc::new(dynamic_polling_metric),
-                (redis.clone(), config),
-                polling_interval,
-                tx,
-                labels,
-            )
-            .await
+            {
+                let c = config.clone();
+                polling_metric_loop(
+                    Arc::new(dynamic_polling_metric),
+                    (redis.clone(), c),
+                    polling_interval,
+                    tx,
+                    labels,
+                )
+                .await
+            }
         }
     }
 }
