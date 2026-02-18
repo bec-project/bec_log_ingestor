@@ -2,7 +2,7 @@ use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
         MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult, MetricFutures,
-        MetricLabels, metric_spawner,
+        MetricLabels, StaticMetricFunc, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now,
     },
@@ -14,7 +14,7 @@ use crate::{
 use prost::Message;
 use redis::{AsyncCommands, Commands, aio::MultiplexedConnection};
 use snap::raw::Encoder;
-use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
+use std::{collections::HashMap, pin::Pin, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
 use tokio::{
     sync::{
@@ -32,7 +32,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-async fn deployment(mut redis: MultiplexedConnection) -> MetricFuncResult {
+async fn deployment(redis: &mut MultiplexedConnection) -> MetricFuncResult {
     let key = "user/services/status/DeviceServer";
     let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
         MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
@@ -69,9 +69,13 @@ async fn deployment(mut redis: MultiplexedConnection) -> MetricFuncResult {
 }
 
 // System info metrics
-async fn cpu_usage_percent(system: &mut System) -> MetricFuncResult {
+fn cpu_usage_percent(
+    system: &mut System,
+) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + Sync>> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    Ok((sample_now(system.global_cpu_usage().into()), None))
+    let usage: f64 = system.global_cpu_usage().into();
+    let result = Ok((sample_now(usage), None));
+    Box::pin(async move { result })
 }
 async fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
     Ok((sample_now(system.used_memory() as f64), None))
@@ -84,28 +88,35 @@ async fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
     // set up the statically defined metrics first
     let mut metrics = HashMap::from([
-        // Redis metrics
-        redis_metric!(
-            deployment,
-            [("beamline", &config.loki.beamline_name)],
-            Some(60)
-        ),
-        // System info metrics
-        system_metric!(
-            cpu_usage_percent,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
-        system_metric!(
-            ram_usage_bytes,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
-        system_metric!(
-            ram_available_bytes,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
+        (
+            "cpu_usage_percent".to_string(),
+            MetricDefinition::Static((
+                StaticMetricFunc::System(Arc::new(cpu_usage_percent)),
+                todo!(),
+                todo!(),
+            )),
+        ), // Redis metrics
+           // redis_metric!(
+           //     deployment,
+           //     [("beamline", &config.loki.beamline_name)],
+           //     Some(60)
+           // ),
+           // // System info metrics
+           // system_metric!(
+           //     cpu_usage_percent,
+           //     [("beamline", &config.loki.beamline_name)],
+           //     None
+           // ),
+           // system_metric!(
+           //     ram_usage_bytes,
+           //     [("beamline", &config.loki.beamline_name)],
+           //     None
+           // ),
+           // system_metric!(
+           //     ram_available_bytes,
+           //     [("beamline", &config.loki.beamline_name)],
+           //     None
+           // ),
     ]);
     // load the dynamically defined metrics from the config
     metrics.extend(
@@ -113,7 +124,7 @@ fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
             .metrics
             .dynamic
             .iter()
-            .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm.clone()))),
+            .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm))),
     );
     Arc::new(metrics)
 }
@@ -131,7 +142,7 @@ async fn watchdog_loop(
     redis: MultiplexedConnection,
 ) {
     let mut interval: Interval = (&config.metrics.watchdog_interval).into();
-    let mut spawner = metric_spawner(tx.clone(), config, redis);
+    let mut spawner = metric_spawner(tx.clone(), config.clone(), redis);
     interval.tick().await;
 
     loop {
@@ -246,7 +257,7 @@ pub async fn metrics_loop(config: &'static IngestorConfig) {
         .await
         .expect("Failed to connect to redis!");
     let metrics = metric_definitions(&config);
-    let spawner = metric_spawner(tx.clone(), config, redis.clone());
+    let spawner = metric_spawner(tx.clone(), config.clone(), redis.clone());
 
     let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));
 
