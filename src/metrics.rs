@@ -1,8 +1,8 @@
 use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
-        MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult, MetricFutures,
-        MetricLabels, PinMetricResultFut, StaticMetricFunc, metric_spawner,
+        MetricDefinition, MetricDefinitions, MetricError, MetricFutures, MetricLabels,
+        PinMetricResultFut, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
         sample_now, sync_metric,
     },
@@ -12,9 +12,9 @@ use crate::{
 };
 
 use prost::Message;
-use redis::{AsyncCommands, Commands, aio::MultiplexedConnection};
+use redis::{AsyncCommands, aio::MultiplexedConnection};
 use snap::raw::Encoder;
-use std::{collections::HashMap, pin::Pin, process::exit, sync::Arc, time::Duration};
+use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, System};
 use tokio::{
     sync::{
@@ -32,7 +32,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut {
+fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
     Box::pin(async move {
         let key = "user/services/status/DeviceServer";
         let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
@@ -72,15 +72,15 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut {
 }
 
 // System info metrics
-fn cpu_usage_percent(system: &mut System) -> PinMetricResultFut {
+fn cpu_usage_percent(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
     let usage: f64 = system.global_cpu_usage().into();
     sync_metric(Ok((sample_now(usage), None)))
 }
-async fn ram_usage_bytes(system: &mut System) -> PinMetricResultFut {
+fn ram_usage_bytes(system: &mut System) -> PinMetricResultFut<'_> {
     sync_metric(Ok((sample_now(system.used_memory() as f64), None)))
 }
-async fn ram_available_bytes(system: &mut System) -> PinMetricResultFut {
+fn ram_available_bytes(system: &mut System) -> PinMetricResultFut<'_> {
     sync_metric(Ok((sample_now(system.available_memory() as f64), None)))
 }
 
@@ -88,35 +88,28 @@ async fn ram_available_bytes(system: &mut System) -> PinMetricResultFut {
 fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
     // set up the statically defined metrics first
     let mut metrics = HashMap::from([
-        (
-            "cpu_usage_percent".to_string(),
-            MetricDefinition::Static((
-                StaticMetricFunc::System(Arc::new(cpu_usage_percent)),
-                todo!(),
-                todo!(),
-            )),
-        ), // Redis metrics
+        // Redis metrics
         redis_metric!(
             deployment,
             [("beamline", &config.loki.beamline_name)],
             Some(60)
         ),
-        // // System info metrics
-        // system_metric!(
-        //     cpu_usage_percent,
-        //     [("beamline", &config.loki.beamline_name)],
-        //     None
-        // ),
-        // system_metric!(
-        //     ram_usage_bytes,
-        //     [("beamline", &config.loki.beamline_name)],
-        //     None
-        // ),
-        // system_metric!(
-        //     ram_available_bytes,
-        //     [("beamline", &config.loki.beamline_name)],
-        //     None
-        // ),
+        // System info metrics
+        system_metric!(
+            cpu_usage_percent,
+            [("beamline", &config.loki.beamline_name)],
+            None
+        ),
+        system_metric!(
+            ram_usage_bytes,
+            [("beamline", &config.loki.beamline_name)],
+            None
+        ),
+        system_metric!(
+            ram_available_bytes,
+            [("beamline", &config.loki.beamline_name)],
+            None
+        ),
     ]);
     // load the dynamically defined metrics from the config
     metrics.extend(

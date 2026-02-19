@@ -2,7 +2,8 @@ use crate::config::{
     DynamicMetric, DynamicMetricDtype, IngestorConfig, RedisConfig, RedisReadType,
 };
 
-use redis::{AsyncCommands, RedisError, aio::MultiplexedConnection};
+use futures::StreamExt;
+use redis::{AsyncCommands, Msg, RedisError, aio::MultiplexedConnection};
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 use sysinfo::System;
 use thiserror::Error;
@@ -190,7 +191,7 @@ fn parsing_error<T: std::fmt::Debug>(
     ))
 }
 
-fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult {
+fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult<'_> {
     match config.dtype {
         DynamicMetricDtype::String => Ok((
             sample_now(1.0),
@@ -220,7 +221,7 @@ fn sync_get(
 
 fn dynamic_polling_metric<'a>(
     (redis, config): &'a mut (MultiplexedConnection, DynamicMetric),
-) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = MetricFuncResult<'a>> + Send + 'a>> {
     Box::pin(async move {
         let val: Vec<u8> = sync_get(redis.clone(), (&config.key).to_owned())
             .await
@@ -248,40 +249,47 @@ pub(crate) async fn dynamic_metric_future(
 ) {
     match &config.read_type {
         RedisReadType::PubSub => {
-            todo!()
-            // let mut pubsub = redis.get_async_pubsub();
-            // pubsub
-            //     .subscribe(&config.key)
-            //     .expect("Could not subscribe to channel!");
-            // loop {
-            //     let msg = pubsub.get_message().expect("Failed to get message!");
-            //     let payload: String = msg.get_payload().expect("Failed to extract payload!");
-            //     let (sample, opt_extra_labels) = match parse_redis_value(&config, payload.into()) {
-            //         Err(MetricError::Fatal(msg)) => {
-            //             panic!("FATAL: {msg}")
-            //         }
-            //         Err(MetricError::Retryable(msg)) => {
-            //             println!("WARNING: {msg}");
-            //             continue;
-            //         }
-            //         Ok(res) => res,
-            //     };
-            //     let mut owned_labels = dbg!(labels.clone());
-            //     dbg!(sample);
-            //     if let Some(extra_labels) = opt_extra_labels {
-            //         owned_labels.extend(extra_labels);
-            //     }
-            //     if tx
-            //         .send(TimeSeries {
-            //             labels: labels_from_hashmap(&owned_labels),
-            //             samples: vec![sample],
-            //         })
-            //         .is_err()
-            //     {
-            //         println!("TASK-FATAL: error transmitting metric to publisher channel");
-            //         break;
-            //     }
-            // }
+            let client = redis::Client::open(redis_config.url.full_url())
+                .expect("Could not connect to redis!");
+            let mut pubsub = client
+                .get_async_pubsub()
+                .await
+                .expect("Could not get pubsub client!");
+            pubsub
+                .subscribe(&config.key)
+                .await
+                .expect("Could not subscribe to channel!");
+            pubsub
+                .on_message()
+                .map(|msg: Msg| {
+                    let payload: String = msg.get_payload().expect("Failed to extract payload!");
+                    let (sample, opt_extra_labels) =
+                        match parse_redis_value(&config, payload.into()) {
+                            Err(MetricError::Fatal(error_msg)) => {
+                                panic!("FATAL: {error_msg}")
+                            }
+                            Err(MetricError::Retryable(error_msg)) => {
+                                println!("WARNING: {error_msg}");
+                                return ();
+                            }
+                            Ok(res) => res,
+                        };
+                    let mut owned_labels = labels.clone();
+                    if let Some(extra_labels) = opt_extra_labels {
+                        owned_labels.extend(extra_labels);
+                    }
+                    if tx
+                        .send(TimeSeries {
+                            labels: labels_from_hashmap(&owned_labels),
+                            samples: vec![sample],
+                        })
+                        .is_err()
+                    {
+                        panic!("TASK-FATAL: error transmitting metric to publisher channel");
+                    }
+                })
+                .collect::<()>()
+                .await
         }
         RedisReadType::Poll(interval_config) => {
             let c = config.clone();
