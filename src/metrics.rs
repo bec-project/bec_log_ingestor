@@ -2,9 +2,9 @@ use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
         MetricDefinition, MetricDefinitions, MetricError, MetricFuncResult, MetricFutures,
-        MetricLabels, StaticMetricFunc, metric_spawner,
+        MetricLabels, PinMetricResultFut, StaticMetricFunc, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
-        sample_now,
+        sample_now, sync_metric,
     },
     redis_metric,
     status_message::StatusMessagePack,
@@ -32,56 +32,56 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Metrics must return a numerical value for the metric (required by prometheus) as well as an optional extra set of labels to append
 //
 
-async fn deployment(redis: &mut MultiplexedConnection) -> MetricFuncResult {
-    let key = "user/services/status/DeviceServer";
-    let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
-        MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
-    })?;
-    if val.is_empty() {
-        return Err(MetricError::Retryable(format!(
-            "No status update found at {key}"
-        )));
-    }
-    let status_update: StatusMessagePack = rmp_serde::from_slice(val.as_slice()).map_err(|e| {
-        MetricError::Retryable(format!(
-            "Failed to parse status message from redis: {}",
-            e.to_string()
-        ))
-    })?;
-    let mut extra_labels: MetricLabels = HashMap::from([]);
-    let service_info = status_update.bec_codec.data.info;
-    match service_info {
-        crate::status_message::Info::ServiceInfo(info) => {
-            let versions = info.bec_codec.data.versions.unwrap();
-            extra_labels.insert("bec_lib".into(), versions.bec_lib);
-            extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
-            extra_labels.insert("bec_server".into(), versions.bec_server);
-            extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
-        }
-        _ => {
-            return Err(MetricError::Fatal(format!(
-                "Status update {service_info:?} contained malformed ServiceInfo"
+fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut {
+    Box::pin(async move {
+        let key = "user/services/status/DeviceServer";
+        let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
+            MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
+        })?;
+        if val.is_empty() {
+            return Err(MetricError::Retryable(format!(
+                "No status update found at {key}"
             )));
         }
-    }
-    // extra_labels.extend(get_versions());
-    Ok((sample_now(1.into()), Some(extra_labels)))
+        let status_update: StatusMessagePack =
+            rmp_serde::from_slice(val.as_slice()).map_err(|e| {
+                MetricError::Retryable(format!(
+                    "Failed to parse status message from redis: {}",
+                    e.to_string()
+                ))
+            })?;
+        let mut extra_labels: MetricLabels = HashMap::from([]);
+        let service_info = status_update.bec_codec.data.info;
+        match service_info {
+            crate::status_message::Info::ServiceInfo(info) => {
+                let versions = info.bec_codec.data.versions.unwrap();
+                extra_labels.insert("bec_lib".into(), versions.bec_lib);
+                extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
+                extra_labels.insert("bec_server".into(), versions.bec_server);
+                extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
+            }
+            _ => {
+                return Err(MetricError::Fatal(format!(
+                    "Status update {service_info:?} contained malformed ServiceInfo"
+                )));
+            }
+        }
+        // extra_labels.extend(get_versions());
+        Ok((sample_now(1.into()), Some(extra_labels)))
+    })
 }
 
 // System info metrics
-fn cpu_usage_percent(
-    system: &mut System,
-) -> Pin<Box<dyn Future<Output = MetricFuncResult> + Send>> {
+fn cpu_usage_percent(system: &mut System) -> PinMetricResultFut {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
     let usage: f64 = system.global_cpu_usage().into();
-    let result = Ok((sample_now(usage), None));
-    Box::pin(async move { result })
+    sync_metric(Ok((sample_now(usage), None)))
 }
-async fn ram_usage_bytes(system: &mut System) -> MetricFuncResult {
-    Ok((sample_now(system.used_memory() as f64), None))
+async fn ram_usage_bytes(system: &mut System) -> PinMetricResultFut {
+    sync_metric(Ok((sample_now(system.used_memory() as f64), None)))
 }
-async fn ram_available_bytes(system: &mut System) -> MetricFuncResult {
-    Ok((sample_now(system.available_memory() as f64), None))
+async fn ram_available_bytes(system: &mut System) -> PinMetricResultFut {
+    sync_metric(Ok((sample_now(system.available_memory() as f64), None)))
 }
 
 /// Defines the list of all metrics to run
@@ -96,27 +96,27 @@ fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
                 todo!(),
             )),
         ), // Redis metrics
-           // redis_metric!(
-           //     deployment,
-           //     [("beamline", &config.loki.beamline_name)],
-           //     Some(60)
-           // ),
-           // // System info metrics
-           // system_metric!(
-           //     cpu_usage_percent,
-           //     [("beamline", &config.loki.beamline_name)],
-           //     None
-           // ),
-           // system_metric!(
-           //     ram_usage_bytes,
-           //     [("beamline", &config.loki.beamline_name)],
-           //     None
-           // ),
-           // system_metric!(
-           //     ram_available_bytes,
-           //     [("beamline", &config.loki.beamline_name)],
-           //     None
-           // ),
+        redis_metric!(
+            deployment,
+            [("beamline", &config.loki.beamline_name)],
+            Some(60)
+        ),
+        // // System info metrics
+        // system_metric!(
+        //     cpu_usage_percent,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     None
+        // ),
+        // system_metric!(
+        //     ram_usage_bytes,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     None
+        // ),
+        // system_metric!(
+        //     ram_available_bytes,
+        //     [("beamline", &config.loki.beamline_name)],
+        //     None
+        // ),
     ]);
     // load the dynamically defined metrics from the config
     metrics.extend(
@@ -124,7 +124,7 @@ fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
             .metrics
             .dynamic
             .iter()
-            .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm))),
+            .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm.clone()))),
     );
     Arc::new(metrics)
 }
