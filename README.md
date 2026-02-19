@@ -2,9 +2,44 @@
 
 [![Linting](https://github.com/bec-project/bec_log_ingestor/actions/workflows/check-and-lint.yaml/badge.svg)](https://github.com/bec-project/bec_log_ingestor/actions/workflows/check-and-lint.yaml) [![codecov](https://codecov.io/gh/bec-project/bec_log_ingestor/graph/badge.svg?token=B7Mzj4EhzH)](https://codecov.io/gh/bec-project/bec_log_ingestor)
 
-Tiny service to pull BEC logs from Redis and push them to Loki.
+Small service to pull BEC logs and metrics from Redis and push them to Loki and Mimir.
 
-To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`.
+## Configuration
+
+There is an example config file in `./install/example_config.toml`.
+Logging or metrics can be temporarily disabled individually with `enable_logging = false` or `enable_logging = false` at
+the top level. The config still needs to be syntactically valid for the disabled component, but the service will not try
+to connect to it.
+
+### Metric intervals
+
+Builtin metrics can have their polling frequency defined in the config file, under `[metrics.intervals]`, for example:
+```toml
+[metrics.intervals]
+cpu_usage_percent = { Secondly = 15 }
+ram_usage_bytes = { Daily = 1 }
+```
+
+Options for time periods are `Millis`, `Secondly`, `Minutely`, `Hourly`, `Daily`, and `Weekly`. `{ Hourly = 2 }` 
+corresponds to every two hours, not twice an hour.
+
+
+### Dynamically defined metrics
+
+The config can be updated to look for metric values at specific keys in Redis without redeploying. These can be PubSub
+or polling key-value entries. For example:
+
+```toml
+[metrics.dynamic]
+dynamic_metric = { read_type = { Poll = { Minutely = 15 } }, key = "/user/dynamicmetrics/1", dtype = "Float" }
+dynamic_pubsub_metric = { read_type = "PubSub", key = "/user/dynamicmetrics/2", dtype = "Float" }
+```
+
+The `dtype` parameter represents how to parse the information obtained from Redis.
+
+### Deployment
+
+To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`. For SLS deployments this is managed in puppet already.
 
 Published RPM packages are signed by PGP, the corresponding public key is:
 
