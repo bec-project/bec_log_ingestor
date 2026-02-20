@@ -281,12 +281,21 @@ mod tests {
     use tokio::spawn;
 
     use crate::{
-        config::{BasicAuth, MetricInterval, MetricsConfig, UrlPort},
-        metrics::consumer_loop,
-        metrics_core::prometheus::{Label, Sample, TimeSeries},
+        config::{
+            BasicAuth, IngestorConfig, LokiConfig, MetricInterval, MetricsConfig, RedisConfig,
+            UrlPort,
+        },
+        metrics::{consumer_loop, metric_definitions},
+        metrics_core::{
+            MetricDefinition,
+            prometheus::{Label, Sample, TimeSeries},
+        },
     };
 
-    fn test_config(url: String) -> MetricsConfig {
+    fn test_config(
+        url: String,
+        intervals: Option<HashMap<String, MetricInterval>>,
+    ) -> MetricsConfig {
         MetricsConfig {
             user_config_path: None,
             auth: BasicAuth {
@@ -294,10 +303,50 @@ mod tests {
                 password: "pass".into(),
             },
             url: url,
-            intervals: HashMap::new(),
+            intervals: intervals.unwrap_or(HashMap::new()),
             dynamic: HashMap::new(),
             watchdog_interval: MetricInterval::Daily(1),
             publish_interval: MetricInterval::Millis(1),
+        }
+    }
+
+    #[test]
+    fn test_definitions() {
+        let intervals: HashMap<String, MetricInterval> = HashMap::from([]);
+        let config = IngestorConfig {
+            redis: RedisConfig {
+                url: UrlPort {
+                    url: "".into(),
+                    port: 12345,
+                },
+                chunk_size: 5,
+                blocktime_millis: 5,
+                consumer_group: "".into(),
+                consumer_id: "".into(),
+            },
+            loki: LokiConfig {
+                url: "".into(),
+                auth: BasicAuth {
+                    username: "user".into(),
+                    password: "pass".into(),
+                },
+                chunk_size: 5,
+                beamline_name: "test".into(),
+            },
+            metrics: test_config("".into(), Some(intervals.clone())),
+            enable_metrics: false,
+            enable_logging: false,
+        };
+        let defs = metric_definitions(Box::leak(Box::new(config)));
+        if let MetricDefinition::Static(def) = defs.get("cpu_usage_pc").unwrap() {
+            assert_eq!(def.2, None);
+        } else {
+            panic!("wrong type!")
+        }
+        if let MetricDefinition::Static(def) = defs.get("deployment").unwrap() {
+            assert_eq!(def.2, Some(60));
+        } else {
+            panic!("wrong type!")
         }
     }
 
@@ -309,7 +358,7 @@ mod tests {
         // Use one of these addresses to configure your client
         let host = server.host_with_port();
         let url = server.url();
-        let config = test_config(url);
+        let config = test_config(url, None);
         // Create a mock
         let mock = server
             .mock("POST", "/")
