@@ -273,3 +273,68 @@ pub async fn metrics_loop(config: &'static IngestorConfig) {
         handle.abort(); // abort each task
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use tokio::spawn;
+
+    use crate::{
+        config::{BasicAuth, MetricInterval, MetricsConfig, UrlPort},
+        metrics::consumer_loop,
+        metrics_core::prometheus::{Label, Sample, TimeSeries},
+    };
+
+    fn test_config(url: String) -> MetricsConfig {
+        MetricsConfig {
+            user_config_path: None,
+            auth: BasicAuth {
+                username: "user".into(),
+                password: "pass".into(),
+            },
+            url: url,
+            intervals: HashMap::new(),
+            dynamic: HashMap::new(),
+            watchdog_interval: MetricInterval::Daily(1),
+            publish_interval: MetricInterval::Millis(1),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_consumer_loop() {
+        // Request a new server from the pool
+        let mut server = mockito::Server::new_async().await;
+
+        // Use one of these addresses to configure your client
+        let host = server.host_with_port();
+        let url = server.url();
+        let config = test_config(url);
+        // Create a mock
+        let mock = server
+            .mock("POST", "/")
+            .with_status(201)
+            .with_header("Content-Type", "application/x-protobuf")
+            .with_header("Content-Encoding", "snappy")
+            .match_request(|req| req.body().unwrap().len() == 33)
+            .create();
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<TimeSeries>();
+        let handle = spawn(consumer_loop(Box::leak(Box::new(rx)), config));
+
+        let _ = tx.send(TimeSeries {
+            labels: Vec::from([Label {
+                name: "__name__".into(),
+                value: "test".into(),
+            }]),
+            samples: Vec::from([Sample {
+                value: 1.0,
+                timestamp: 0,
+            }]),
+        });
+        drop(tx);
+        let _ = handle.await;
+
+        mock.assert();
+    }
+}
