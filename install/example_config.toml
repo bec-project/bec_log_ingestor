@@ -15,9 +15,11 @@ chunk_size = 100
 beamline_name = "x99xa"
 
 [metrics]
-user_config_path = "./tests/test_metrics_config.toml"
+user_config_path = "./src/tests/test_metrics_config.toml"
 url = "http://localhost"
 auth = { username = "test-mimir", password = "test-mimir-password" }
+watchdog_interval = { Secondly = 1 }
+publish_interval = { Secondly = 1 }
 
 [metrics.intervals]
 new_metric = { Secondly = 53 }

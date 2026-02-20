@@ -21,6 +21,9 @@ mod metrics;
 mod metrics_core;
 use crate::metrics::metrics_loop;
 
+#[cfg(test)]
+mod tests;
+
 static STOP_METRICS: AtomicBool = AtomicBool::new(false);
 
 #[derive(clap::Parser, Debug)]

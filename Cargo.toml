@@ -46,6 +46,8 @@ rustls = { version = "0.23" }
 
 [dev-dependencies]
 mockito = "1.7.2"
+testcontainers-modules = { version = "0.14.0", features = ["redis"] }
+
 
 [build-dependencies]
 prost-build = "0.14.3"

@@ -252,9 +252,9 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
 /// Main routine to start the metrics service
 pub async fn metrics_loop(config: &'static IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
-
-    let client =
-        redis::Client::open(config.redis.url.full_url()).expect("Failed to connect to redis!");
+    let redis_url: String = config.redis.url.full_url();
+    let client = redis::Client::open(redis_url.clone())
+        .expect(format!("Failed to connect to redis at {redis_url}!").as_str());
     let redis = client
         .get_multiplexed_async_connection()
         .await
