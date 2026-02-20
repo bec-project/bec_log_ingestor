@@ -47,7 +47,7 @@ pub(crate) type MetricFuncResult<'a> =
 pub(crate) type PinMetricResultFut<'a> =
     Pin<Box<dyn Future<Output = MetricFuncResult<'a>> + Send + 'a>>;
 pub(crate) type SimpleMetricFunc = Arc<dyn AsyncFnMut<()> + Send>;
-pub(crate) type SysinfoMetricFunc = Arc<dyn AsyncFnMut<System> + Send>;
+pub(crate) type SysMetricFunc = Arc<dyn AsyncFnMut<System> + Send>;
 pub(crate) type RedisMetricFunc = Arc<dyn AsyncFnMut<MultiplexedConnection> + Send>;
 
 pub(crate) type MetricLabels = HashMap<String, String>;
@@ -65,7 +65,23 @@ pub(crate) type MetricFutures = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
 pub(crate) enum StaticMetricFunc {
     Simple(SimpleMetricFunc),
     Redis(RedisMetricFunc),
-    System(SysinfoMetricFunc),
+    System(SysMetricFunc),
+}
+
+impl From<SimpleMetricFunc> for StaticMetricFunc {
+    fn from(value: SimpleMetricFunc) -> Self {
+        StaticMetricFunc::Simple(value)
+    }
+}
+impl From<SysMetricFunc> for StaticMetricFunc {
+    fn from(value: SysMetricFunc) -> Self {
+        StaticMetricFunc::System(value)
+    }
+}
+impl From<RedisMetricFunc> for StaticMetricFunc {
+    fn from(value: RedisMetricFunc) -> Self {
+        StaticMetricFunc::Redis(value)
+    }
 }
 
 pub(crate) fn sync_metric(result: MetricFuncResult) -> PinMetricResultFut {
@@ -305,80 +321,31 @@ pub(crate) async fn dynamic_metric_future(
     }
 }
 
-/// These macros create an entry for the main MetricDefinitions hashmap (name: String, (func: MetricFunc, labels: HM<String, String>, default_interval_seconds: Option<u32>))
-/// from a conforming function, automatically adding the '__name__' label for prometheus/mimir from the function name
-///
-/// E.g. for a metric function which takes no arguments:
-/// ```
-/// /// Metric which is always true
-/// fn always_true() -> MetricFuncResult {
-///     (sample_now(1.into()), None)
-/// }
-///
-/// simple_metric!(always_true, [("extra_label_key": "extra_label_value")], None)
-/// ```
-/// will give you:
-/// ```
-/// (
-///     "always_true",
-///     (
-///         MetricFunc::Simple(Arc::new(always_true as dyn Fn() -> MetricFuncResult + Send + Sync)),
-///         HashMap::from([
-///                         ("__name__".into(): "always_true".into()),
-///                         ("extra_label_key".into(): "extra_label_value".into()),
-///                       ]),
-///         None,
-///     )
-/// )
-/// ```
-///
-/// TODO: These can be simplified to a nested macro when the feature is stabilized: https://github.com/rust-lang/rust/issues/83527
-/// TODO: also take the "beamline" label from the config.
-#[macro_export]
-macro_rules! simple_metric {
-    ($func:expr, [ $(($label_k:expr, $label_v:expr)),*], $int:expr) => {
-        (
-            stringify!($func).to_string(),
-            (
-                $crate::metrics_core::StaticMetricFunc::Simple(std::sync::Arc::new($func) as $crate::metrics_core::SimpleMetricFunc),
-                std::collections::HashMap::from([("__name__".to_string(), stringify!($func).to_string()), $(($label_k.into(), $label_v.into())),*]),
-                $int
-            )
-        )
-    };
-}
-#[macro_export]
-macro_rules! system_metric {
-    ($func:expr, [ $(($label_k:expr, $label_v:expr)),*], $int:expr) => {
-        (
-            stringify!($func).to_string(),
-            $crate::metrics_core::MetricDefinition::Static((
-                $crate::metrics_core::StaticMetricFunc::System(std::sync::Arc::new($func)),
-                std::collections::HashMap::from([("__name__".to_string(), stringify!($func).to_string()), $(($label_k.into(), $label_v.into())),*]),
-                $int
-            )),
-        )
-    };
-}
-#[macro_export]
-macro_rules! redis_metric {
-    ($func:expr, [ $(($label_k:expr, $label_v:expr)),*], $int:expr) => {
-        (
-            stringify!($func).to_string(),
-            $crate::metrics_core::MetricDefinition::Static((
-                $crate::metrics_core::StaticMetricFunc::Redis(std::sync::Arc::new($func) as $crate::metrics_core::RedisMetricFunc),
-                std::collections::HashMap::from([("__name__".to_string(), stringify!($func).to_string()), $(($label_k.into(), $label_v.into())),*]),
-                $int
-            ))
-        )
-    };
+pub(crate) fn static_metric_def<F>(
+    func: F,
+    config: &'static IngestorConfig,
+    default_interval: MetricDefaultIntervalSeconds,
+    extra_labels: Option<&[(&str, &str)]>,
+) -> (String, MetricDefinition)
+where
+    F: Into<StaticMetricFunc>,
+{
+    let mut metric_labels: MetricLabels =
+        HashMap::from([("beamline".into(), config.loki.beamline_name.to_owned())]);
+    metric_labels.insert("__name__".into(), stringify!(func).into());
+    if let Some(extend_labels) = extra_labels {
+        metric_labels.extend(extend_labels.iter().map(|&(a, b)| (a.into(), b.into())));
+    }
+    (
+        stringify!(func).into(),
+        MetricDefinition::Static((func.into(), metric_labels, default_interval)),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::MetricInterval, metrics_core::*};
+    use crate::metrics_core::*;
     use sysinfo::System;
-    use tokio::sync::mpsc;
 
     fn test_metric(_system: &mut System) -> PinMetricResultFut<'_> {
         Box::pin(async move {
@@ -408,29 +375,6 @@ url = \"http://127.0.0.1\"
 ";
         let cfg: IngestorConfig = toml::from_str(&test_str).unwrap();
         Box::leak(Box::new(cfg))
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_system_metric_macro() {
-        let (name, def): (String, MetricDefinition) =
-            system_metric!(test_metric, [("beamline", "x99xa")], None);
-        let MetricDefinition::Static((func, labels, _int)) = def else {
-            panic!()
-        };
-        assert_eq!(name, "test_metric");
-        assert_eq!(labels.get("beamline").unwrap(), "x99xa");
-
-        let mut system = System::new();
-        match func {
-            StaticMetricFunc::Simple(_) => assert!(false),
-            StaticMetricFunc::Redis(_) => assert!(false),
-            StaticMetricFunc::System(func) => {
-                let (samp, extra_labels) = func.call(&mut system).await.unwrap();
-                assert!(extra_labels.is_none());
-                assert_eq!(samp.value, 12.34);
-                assert_eq!(samp.timestamp, 5678);
-            }
-        }
     }
 
     #[test]
