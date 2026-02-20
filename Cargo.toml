@@ -43,6 +43,8 @@ tokio = { version = "1.49.0", features = [
 ] }
 toml = "1.0.1"
 rustls = { version = "0.23" }
+
+[dev-dependencies]
 mockito = "1.7.2"
 
 [build-dependencies]
