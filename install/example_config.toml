@@ -15,7 +15,7 @@ chunk_size = 100
 beamline_name = "x99xa"
 
 [metrics]
-user_config_path = "./test/test_metrics_config.toml"
+user_config_path = "./tests/test_metrics_config.toml"
 url = "http://localhost"
 auth = { username = "test-mimir", password = "test-mimir-password" }
 

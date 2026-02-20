@@ -352,14 +352,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_consumer_loop() {
-        // Request a new server from the pool
         let mut server = mockito::Server::new_async().await;
-
-        // Use one of these addresses to configure your client
-        let host = server.host_with_port();
         let url = server.url();
         let config = test_config(url, None);
-        // Create a mock
         let mock = server
             .mock("POST", "/")
             .with_status(201)
