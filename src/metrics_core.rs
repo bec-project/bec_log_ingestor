@@ -174,7 +174,8 @@ async fn polling_metric_loop<Args>(
         let metric_res = func.call(&mut args).await;
         let (sample, opt_extra_labels) = match metric_res {
             Err(MetricError::Fatal(msg)) => {
-                panic!("FATAL: {msg}")
+                println!("FATAL: {msg}");
+                break;
             }
             Err(MetricError::Retryable(msg)) => {
                 println!("WARNING: {msg}");
@@ -339,9 +340,12 @@ pub(crate) async fn dynamic_metric_future(
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::UnsafeCell, time::Duration};
+
     use crate::metrics_core::*;
     use futures::executor::block_on;
     use sysinfo::System;
+    use tokio::time::interval;
 
     fn test_metric(_system: &mut System) -> PinMetricResultFut<'_> {
         sync_metric(Ok((
@@ -393,9 +397,52 @@ url = \"http://127.0.0.1\"
     #[tokio::test(flavor = "multi_thread")]
     async fn test_sync_metric() {
         let mut sys = System::new();
-        let result = block_on((test_metric(&mut sys))).unwrap().0;
+        let result = block_on(test_metric(&mut sys)).unwrap().0;
         assert_eq!(result.value, 12.34);
         assert_eq!(result.timestamp, 5678);
+    }
+
+    struct TestMetricEnds {
+        count: Mutex<UnsafeCell<u16>>,
+    }
+    impl AsyncFnMut<()> for TestMetricEnds {
+        fn call<'a>(&self, _: &'a mut ()) -> PinMetricResultFut<'a> {
+            let lock_count_res = self.count.try_lock();
+            if lock_count_res.is_err() {
+                return sync_metric(Err(MetricError::Retryable("Busy".into())));
+            }
+            let mut lock_count = lock_count_res.unwrap();
+            let x = lock_count.get_mut();
+            let res = match x.clone() {
+                0 => sync_metric(Err(MetricError::Retryable("Busy".into()))),
+                1 => sync_metric(Ok((sample_now(1.0), None))),
+                2 => sync_metric(Ok((sample_now(2.0), None))),
+                3 => sync_metric(Ok((sample_now(3.0), None))),
+                _ => sync_metric(Err(MetricError::Fatal("Finished".into()))),
+            };
+            *x += 1;
+            res
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_polling_metric_loop() {
+        let test_metric_count: Mutex<UnsafeCell<u16>> = Mutex::new(UnsafeCell::new(0));
+        let tme = TestMetricEnds {
+            count: test_metric_count,
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TimeSeries>();
+        let handle = spawn(polling_metric_loop(
+            Arc::new(tme),
+            (),
+            interval(Duration::from_millis(1)),
+            tx,
+            HashMap::new(),
+        ));
+        let _ = handle.await;
+        let mut results: Vec<TimeSeries> = Vec::new();
+        rx.recv_many(&mut results, 4).await;
+        assert_eq!(results.len(), 3)
     }
 
     // Need to mock/trait redis to re-enable this test
