@@ -13,7 +13,7 @@ use prost::Message;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use snap::raw::Encoder;
 use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
-use sysinfo::{CpuRefreshKind, System};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::{
     sync::{
         Mutex,
@@ -72,13 +72,14 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
 // System info metrics
 fn cpu_usage_pc(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    let usage: f64 = system.global_cpu_usage().into();
-    sync_metric(Ok((sample_now(usage), None)))
+    sync_metric(Ok((sample_now(system.global_cpu_usage() as f64), None)))
 }
 fn ram_used_bytes(system: &mut System) -> PinMetricResultFut<'_> {
+    system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
     sync_metric(Ok((sample_now(system.used_memory() as f64), None)))
 }
 fn ram_avail_bytes(system: &mut System) -> PinMetricResultFut<'_> {
+    system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
     sync_metric(Ok((sample_now(system.available_memory() as f64), None)))
 }
 
@@ -88,23 +89,24 @@ fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
     let mut metrics = HashMap::from([
         static_metric_def(
             Arc::new(deployment) as RedisMetricFunc,
-            &config,
-            Some(60),
-            None,
+            "deployment",
+            (&config, Some(60), None),
         ),
         // System info metrics
-        static_metric_def(Arc::new(cpu_usage_pc) as SysMetricFunc, &config, None, None),
+        static_metric_def(
+            Arc::new(cpu_usage_pc) as SysMetricFunc,
+            "cpu_usage_pc",
+            (&config, None, None),
+        ),
         static_metric_def(
             Arc::new(ram_used_bytes) as SysMetricFunc,
-            &config,
-            None,
-            None,
+            "ram_used_bytes",
+            (&config, None, None),
         ),
         static_metric_def(
             Arc::new(ram_avail_bytes) as SysMetricFunc,
-            &config,
-            None,
-            None,
+            "ram_avail_bytes",
+            (&config, None, None),
         ),
     ]);
     // load the dynamically defined metrics from the config
