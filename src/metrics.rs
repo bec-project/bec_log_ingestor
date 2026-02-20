@@ -2,13 +2,11 @@ use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
         MetricDefinition, MetricDefinitions, MetricError, MetricFutures, MetricLabels,
-        PinMetricResultFut, metric_spawner,
+        PinMetricResultFut, RedisMetricFunc, SysMetricFunc, metric_spawner,
         prometheus::{TimeSeries, WriteRequest},
-        sample_now, sync_metric,
+        sample_now, static_metric_def, sync_metric,
     },
-    redis_metric,
     status_message::StatusMessagePack,
-    system_metric,
 };
 
 use prost::Message;
@@ -72,43 +70,41 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
 }
 
 // System info metrics
-fn cpu_usage_percent(system: &mut System) -> PinMetricResultFut<'_> {
+fn cpu_usage_pc(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
     let usage: f64 = system.global_cpu_usage().into();
     sync_metric(Ok((sample_now(usage), None)))
 }
-fn ram_usage_bytes(system: &mut System) -> PinMetricResultFut<'_> {
+fn ram_used_bytes(system: &mut System) -> PinMetricResultFut<'_> {
     sync_metric(Ok((sample_now(system.used_memory() as f64), None)))
 }
-fn ram_available_bytes(system: &mut System) -> PinMetricResultFut<'_> {
+fn ram_avail_bytes(system: &mut System) -> PinMetricResultFut<'_> {
     sync_metric(Ok((sample_now(system.available_memory() as f64), None)))
 }
 
 /// Defines the list of all metrics to run
-fn metric_definitions(config: &IngestorConfig) -> MetricDefinitions {
+fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
     // set up the statically defined metrics first
     let mut metrics = HashMap::from([
-        // Redis metrics
-        redis_metric!(
-            deployment,
-            [("beamline", &config.loki.beamline_name)],
-            Some(60)
+        static_metric_def(
+            Arc::new(deployment) as RedisMetricFunc,
+            &config,
+            Some(60),
+            None,
         ),
         // System info metrics
-        system_metric!(
-            cpu_usage_percent,
-            [("beamline", &config.loki.beamline_name)],
-            None
+        static_metric_def(Arc::new(cpu_usage_pc) as SysMetricFunc, &config, None, None),
+        static_metric_def(
+            Arc::new(ram_used_bytes) as SysMetricFunc,
+            &config,
+            None,
+            None,
         ),
-        system_metric!(
-            ram_usage_bytes,
-            [("beamline", &config.loki.beamline_name)],
-            None
-        ),
-        system_metric!(
-            ram_available_bytes,
-            [("beamline", &config.loki.beamline_name)],
-            None
+        static_metric_def(
+            Arc::new(ram_avail_bytes) as SysMetricFunc,
+            &config,
+            None,
+            None,
         ),
     ]);
     // load the dynamically defined metrics from the config
