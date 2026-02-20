@@ -452,37 +452,4 @@ url = \"http://127.0.0.1\"
         rx.recv_many(&mut results, 4).await;
         assert_eq!(results.len(), 3)
     }
-
-    // Need to mock/trait redis to re-enable this test
-    // #[tokio::test(flavor = "multi_thread")]
-    // async fn test_metric_future() {
-    //     let mut config = test_config();
-    //     config
-    //         .metrics
-    //         .intervals
-    //         .insert("test_metric".into(), MetricInterval::Millis(1));
-    //     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
-    //     let mut spawner = metric_spawner(tx.clone(), config.clone(), todo!());
-
-    //     let (name, def): (String, MetricDefinition) =
-    //         system_metric!(test_metric, [("beamline", "x99xa")], None);
-    //     // Assert that the type is a static metric definition and then rewrap it
-    //     let MetricDefinition::Static((func, labels, int)) = def else {
-    //         panic!()
-    //     };
-    //     let (_, fut) = spawner((&name, &MetricDefinition::Static((func, labels, None))));
-    //     let mut buf: Vec<TimeSeries> = Vec::with_capacity(10);
-    //     rx.recv_many(&mut buf, 10).await;
-    //     fut.abort();
-
-    //     let item = buf.get(0).unwrap();
-    //     assert_eq!(&item.labels.len(), &2);
-    //     let labels: MetricLabels = item
-    //         .labels
-    //         .iter()
-    //         .map(|l| (l.name.clone(), l.value.clone()))
-    //         .collect();
-    //     assert_eq!(labels.get("__name__").unwrap(), &"test_metric".to_string());
-    //     assert_eq!(labels.get("beamline").unwrap(), &"x99xa".to_string());
-    // }
 }
