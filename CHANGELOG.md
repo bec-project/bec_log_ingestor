@@ -1,3 +1,11 @@
+## [1.7.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.7.0...v1.7.1) (2026-02-20)
+
+
+### Bug Fixes
+
+* add test for definitions ([01b6f5b](https://github.com/bec-project/bec_log_ingestor/commit/01b6f5b06bfa0a658fb60bc007685155d1990160))
+* rename main loop ([f9ab20d](https://github.com/bec-project/bec_log_ingestor/commit/f9ab20de704c09ec1f1fa252f0a88dd34203f12e))
+
 # [1.7.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.6.0...v1.7.0) (2026-02-20)
 
 
