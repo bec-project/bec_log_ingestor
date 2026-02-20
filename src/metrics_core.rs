@@ -3,7 +3,7 @@ use crate::config::{
 };
 
 use futures::StreamExt;
-use redis::{AsyncCommands, Msg, RedisError, aio::MultiplexedConnection};
+use redis::{AsyncCommands, Msg, aio::MultiplexedConnection};
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 use sysinfo::System;
 use thiserror::Error;
@@ -103,6 +103,28 @@ pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
             value: v.into(),
         })
         .collect()
+}
+
+pub(crate) fn static_metric_def(
+    func: impl Into<StaticMetricFunc>,
+    name: impl Into<String>,
+    (config, default_interval, extra_labels): (
+        &'static IngestorConfig,
+        MetricDefaultIntervalSeconds,
+        Option<&[(&str, &str)]>,
+    ),
+) -> (String, MetricDefinition) {
+    let name: String = name.into();
+    let mut metric_labels: MetricLabels =
+        HashMap::from([("beamline".into(), config.loki.beamline_name.to_owned())]);
+    metric_labels.insert("__name__".into(), name.clone());
+    if let Some(extend_labels) = extra_labels {
+        metric_labels.extend(extend_labels.iter().map(|&(a, b)| (a.into(), b.into())));
+    }
+    (
+        name,
+        MetricDefinition::Static((func.into(), metric_labels, default_interval)),
+    )
 }
 
 pub(crate) fn metric_spawner(
@@ -228,20 +250,14 @@ fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncR
     }
 }
 
-fn sync_get(
-    mut redis: MultiplexedConnection,
-    key: String,
-) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, RedisError>> + Send>> {
-    Box::pin(async move { redis.get(key).await })
-}
-
 fn dynamic_polling_metric<'a>(
     (redis, config): &'a mut (MultiplexedConnection, DynamicMetric),
 ) -> Pin<Box<dyn Future<Output = MetricFuncResult<'a>> + Send + 'a>> {
     Box::pin(async move {
-        let val: Vec<u8> = sync_get(redis.clone(), (&config.key).to_owned())
+        let val: Vec<u8> = redis
+            .get(&config.key)
             .await
-            .expect("Unspecified redis error");
+            .map_err(|e| MetricError::Fatal(e.detail().unwrap_or("Unspecified").into()))?;
         if val.is_empty() {
             Err(MetricError::Retryable(format!(
                 "No value found at dynamically defined key: {:?}",
@@ -321,45 +337,23 @@ pub(crate) async fn dynamic_metric_future(
     }
 }
 
-pub(crate) fn static_metric_def<F>(
-    func: F,
-    config: &'static IngestorConfig,
-    default_interval: MetricDefaultIntervalSeconds,
-    extra_labels: Option<&[(&str, &str)]>,
-) -> (String, MetricDefinition)
-where
-    F: Into<StaticMetricFunc>,
-{
-    let mut metric_labels: MetricLabels =
-        HashMap::from([("beamline".into(), config.loki.beamline_name.to_owned())]);
-    metric_labels.insert("__name__".into(), stringify!(func).into());
-    if let Some(extend_labels) = extra_labels {
-        metric_labels.extend(extend_labels.iter().map(|&(a, b)| (a.into(), b.into())));
-    }
-    (
-        stringify!(func).into(),
-        MetricDefinition::Static((func.into(), metric_labels, default_interval)),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use crate::metrics_core::*;
+    use futures::executor::block_on;
     use sysinfo::System;
 
     fn test_metric(_system: &mut System) -> PinMetricResultFut<'_> {
-        Box::pin(async move {
-            Ok((
-                Sample {
-                    value: 12.34,
-                    timestamp: 5678,
-                },
-                None,
-            ))
-        })
+        sync_metric(Ok((
+            Sample {
+                value: 12.34,
+                timestamp: 5678,
+            },
+            None,
+        )))
     }
 
-    fn test_config() -> &'static mut IngestorConfig {
+    fn test_config() -> IngestorConfig {
         let test_str = "
 [redis.url]
 url = \"http://127.0.0.1\"
@@ -373,8 +367,7 @@ url = \"http://127.0.0.1/api/v1/push\"
 auth = { username = \"test_user\", password = \"test_password\" }
 url = \"http://127.0.0.1\"
 ";
-        let cfg: IngestorConfig = toml::from_str(&test_str).unwrap();
-        Box::leak(Box::new(cfg))
+        toml::from_str(&test_str).unwrap()
     }
 
     #[test]
@@ -384,6 +377,25 @@ url = \"http://127.0.0.1\"
         dbg!(&samp.timestamp);
         dbg!(ts);
         assert!(samp.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
+    }
+
+    #[test]
+    fn test_create_metric_def() {
+        let config: &'static mut IngestorConfig = Box::leak(Box::new(test_config()));
+        let def = static_metric_def(
+            Arc::new(test_metric) as SysMetricFunc,
+            "test_metric",
+            (config, None, None),
+        );
+        assert_eq!(def.0, "test_metric")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_metric() {
+        let mut sys = System::new();
+        let result = block_on((test_metric(&mut sys))).unwrap().0;
+        assert_eq!(result.value, 12.34);
+        assert_eq!(result.timestamp, 5678);
     }
 
     // Need to mock/trait redis to re-enable this test
