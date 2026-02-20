@@ -1,3 +1,14 @@
+# [1.7.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.6.0...v1.7.0) (2026-02-20)
+
+
+### Features
+
+* add dynamic metrics to config ([74ed870](https://github.com/bec-project/bec_log_ingestor/commit/74ed8708bd422a32e6d81264fd31c23f83cbf9a7))
+* polling dynamic metric ([4e0493d](https://github.com/bec-project/bec_log_ingestor/commit/4e0493d46c9dfb95a84a27c6a865f75373ed5f9f))
+* propagate pubsub metrics to mimir ([55315b6](https://github.com/bec-project/bec_log_ingestor/commit/55315b6f9d18166e329f8c45a03b268c06179c9b))
+* refactor task spawner for dynamic metrics ([9dd4406](https://github.com/bec-project/bec_log_ingestor/commit/9dd4406d83527fe03348da967da4225fb26d596a))
+* update redis and use async client ([22b756b](https://github.com/bec-project/bec_log_ingestor/commit/22b756b5023c0bff20eebdef0e21c7e2695510c8))
+
 # [1.6.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.5.3...v1.6.0) (2026-02-09)
 
 
