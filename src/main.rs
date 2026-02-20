@@ -52,7 +52,7 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
     (args.config, args.metrics_config)
 }
 
-async fn main_loop(config: &'static IngestorConfig) {
+async fn run_services(config: &'static IngestorConfig) {
     println!("Starting log ingestor with config: \n {:?}", &config);
 
     let metrics = if config.enable_metrics {
@@ -79,5 +79,5 @@ async fn main() {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
-    main_loop(config).await
+    run_services(config).await
 }
