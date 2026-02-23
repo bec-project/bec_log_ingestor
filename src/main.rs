@@ -1,5 +1,6 @@
+use clap::Parser;
 use std::process::exit;
-
+use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc;
 
 mod models;
@@ -20,7 +21,7 @@ mod metrics;
 mod metrics_core;
 use crate::metrics::metrics_loop;
 
-use clap::Parser;
+static STOP_METRICS: AtomicBool = AtomicBool::new(false);
 
 #[derive(clap::Parser, Debug)]
 struct Args {
