@@ -1,4 +1,5 @@
 use crate::{
+    STOP_METRICS,
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
         MetricDefinition, MetricDefinitions, MetricError, MetricFutures, MetricLabels,
@@ -12,7 +13,12 @@ use crate::{
 use prost::Message;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use snap::raw::Encoder;
-use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    process::exit,
+    sync::{Arc, atomic::Ordering},
+    time::Duration,
+};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tokio::{
     sync::{
@@ -137,6 +143,9 @@ async fn watchdog_loop(
     interval.tick().await;
 
     loop {
+        if STOP_METRICS.load(Ordering::Relaxed) {
+            break;
+        }
         interval.tick().await;
         println!("Watchdog checking {:?}", futs.lock().await.keys());
         dbg!(tx.strong_count());
@@ -180,6 +189,9 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
     let mut interval: Interval = (&config.publish_interval).into();
 
     loop {
+        if STOP_METRICS.load(Ordering::Relaxed) {
+            break;
+        }
         interval.tick().await;
         println!("DEBUG: publishing metrics to Mimir");
         let open = rx.recv_many(&mut buffer, chunk_size).await;

@@ -1,10 +1,15 @@
-use crate::config::{
-    DynamicMetric, DynamicMetricDtype, IngestorConfig, RedisConfig, RedisReadType,
+use crate::{
+    STOP_METRICS,
+    config::{DynamicMetric, DynamicMetricDtype, IngestorConfig, RedisConfig, RedisReadType},
 };
 
 use futures::StreamExt;
 use redis::{AsyncCommands, Msg, aio::MultiplexedConnection};
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    sync::{Arc, atomic::Ordering},
+};
 use sysinfo::System;
 use thiserror::Error;
 use tokio::{
@@ -170,6 +175,9 @@ async fn polling_metric_loop<Args>(
     labels: MetricLabels,
 ) -> () {
     loop {
+        if STOP_METRICS.load(Ordering::Relaxed) {
+            break;
+        }
         interval.tick().await;
         let metric_res = func.call(&mut args).await;
         let (sample, opt_extra_labels) = match metric_res {
