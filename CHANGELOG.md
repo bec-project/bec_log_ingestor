@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.7.1...v1.8.0) (2026-02-24)
+
+
+### Bug Fixes
+
+* enable integration tests only on x86_64 ([dd269d3](https://github.com/bec-project/bec_log_ingestor/commit/dd269d3e4721f8cc254acd743b03d1e4f5579cf8))
+
+
+### Features
+
+* stop flag ([81f59e7](https://github.com/bec-project/bec_log_ingestor/commit/81f59e799d7487f39171fd8ef8d3c9d07f8299ef))
+
 ## [1.7.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.7.0...v1.7.1) (2026-02-20)
 
 
