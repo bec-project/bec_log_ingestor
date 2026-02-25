@@ -2,6 +2,8 @@ use std::{collections::HashMap, fmt, io::Read, time::Duration};
 
 use serde_derive::{Deserialize, Serialize};
 
+use crate::metrics_core::MetricLabels;
+
 pub trait FromTomlFile {
     /// Parse a toml file for an IngestorConfig. Assumes the file exists and is readable.
     fn from_file(path: std::path::PathBuf) -> Self
@@ -183,7 +185,11 @@ impl MetricsConfig {
 fn default_true() -> bool {
     true
 }
-
+fn get_hostname() -> String {
+    gethostname::gethostname()
+        .into_string()
+        .unwrap_or("failed_to_parse_hostname".into())
+}
 #[derive(Clone, Debug, Deserialize)]
 pub struct IngestorConfig {
     pub redis: RedisConfig,
@@ -193,6 +199,9 @@ pub struct IngestorConfig {
     pub enable_metrics: bool,
     #[serde(default = "default_true")]
     pub enable_logging: bool,
+
+    #[serde(skip, default = "get_hostname")]
+    pub hostname: String,
 }
 impl FromTomlFile for IngestorConfig {}
 
@@ -220,6 +229,14 @@ pub fn assemble_config(paths: (std::path::PathBuf, Option<std::path::PathBuf>)) 
         config.metrics.intervals.extend(intervals.intervals);
     }
     config
+}
+impl IngestorConfig {
+    pub fn default_labels(&self) -> MetricLabels {
+        HashMap::from([
+            ("beamline".into(), self.loki.beamline_name.to_owned()),
+            ("hostname".into(), self.hostname.to_owned()),
+        ])
+    }
 }
 
 #[cfg(test)]

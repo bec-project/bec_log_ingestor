@@ -120,8 +120,7 @@ pub(crate) fn static_metric_def(
     ),
 ) -> (String, MetricDefinition) {
     let name: String = name.into();
-    let mut metric_labels: MetricLabels =
-        HashMap::from([("beamline".into(), config.loki.beamline_name.to_owned())]);
+    let mut metric_labels: MetricLabels = config.default_labels();
     metric_labels.insert("__name__".into(), name.clone());
     if let Some(extend_labels) = extra_labels {
         metric_labels.extend(extend_labels.iter().map(|&(a, b)| (a.into(), b.into())));
@@ -151,10 +150,11 @@ pub(crate) fn metric_spawner(
         MetricDefinition::Dynamic(metric_config) => (
             name.clone(),
             spawn(dynamic_metric_future(
-                HashMap::from([
-                    ("__name__".to_string(), name.clone()),
-                    ("beamline".into(), config.loki.beamline_name.to_owned()),
-                ]),
+                {
+                    let mut metric_labels: MetricLabels = config.default_labels();
+                    metric_labels.insert("__name__".into(), name.clone());
+                    metric_labels
+                },
                 metric_config.clone().clone(),
                 redis.clone(),
                 config.redis.clone(),
