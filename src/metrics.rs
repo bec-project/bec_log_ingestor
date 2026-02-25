@@ -348,6 +348,7 @@ mod tests {
             metrics: test_config("".into(), Some(intervals.clone())),
             enable_metrics: false,
             enable_logging: false,
+            hostname: "host".into(),
         };
         let defs = metric_definitions(Box::leak(Box::new(config)));
         if let MetricDefinition::Static(def) = defs.get("cpu_usage_pc").unwrap() {
