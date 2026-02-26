@@ -95,6 +95,7 @@ enum ServiceStatusValue {
     Error,
     StatusMessageParseError,
 }
+
 impl Into<String> for &ServiceStatusValue {
     fn into(self) -> String {
         match self {
@@ -105,21 +106,6 @@ impl Into<String> for &ServiceStatusValue {
             ServiceStatusValue::Error => "ERROR".into(),
             ServiceStatusValue::StatusMessageParseError => "STATUS_MESSAGE_PARSE_ERROR".into(),
         }
-    }
-}
-impl ServiceStatusValue {
-    pub fn list_all() -> Vec<String> {
-        [
-            ServiceStatusValue::Offline,
-            ServiceStatusValue::Running,
-            ServiceStatusValue::Busy,
-            ServiceStatusValue::Idle,
-            ServiceStatusValue::Error,
-            ServiceStatusValue::StatusMessageParseError,
-        ]
-        .iter()
-        .map(|i| i.into())
-        .collect()
     }
 }
 
@@ -163,13 +149,12 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
             }
         }
         Ok((
-            MetricOutput::SampleForMultiplexing((
+            MetricOutput::SampleForStringEncoding((
                 chrono::Utc::now().timestamp_millis(),
                 SERVICE_EPS_AND_NAMES
                     .iter()
                     .map(|(_, n)| (*n).into())
                     .collect(),
-                ServiceStatusValue::list_all(),
             )),
             Some(labels),
         ))
@@ -211,7 +196,7 @@ fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
         static_metric_def(
             Arc::new(service_statuses) as RedisMetricFunc,
             "service_statuses",
-            (&config, Some(20), None),
+            (&config, Some(6), None),
         ),
         // System info metrics
         static_metric_def(

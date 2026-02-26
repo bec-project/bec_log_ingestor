@@ -49,7 +49,7 @@ where
 
 pub(crate) enum MetricOutput {
     NumericalSample(Sample),
-    SampleForMultiplexing((i64, Vec<String>, Vec<String>)),
+    SampleForStringEncoding((i64, Vec<String>)),
 }
 
 pub(crate) type MetricFuncResult<'a> =
@@ -105,35 +105,27 @@ pub(crate) fn numerical_sample_now(value: f64) -> MetricOutput {
         value,
     })
 }
-pub(crate) fn multiplex_samples(
+pub(crate) fn encode_submetrics(
     timestamp: i64,
     mut labels: MetricLabels,
-    keys_to_multiplex: Vec<String>,
-    possible_values: Vec<String>,
+    keys_to_encode: Vec<String>,
 ) -> Vec<TimeSeries> {
-    let mut tss: Vec<TimeSeries> = vec![];
-
     let mut metric_values: Vec<(String, String)> = vec![];
-    for k in keys_to_multiplex {
+    for k in keys_to_encode {
         if let Some(v) = labels.remove(&k) {
             metric_values.push((k, v));
         }
     }
-
-    for (k, v) in &metric_values {
-        for pv in &possible_values {
-            let mut labs = labels.clone();
-            labs.insert(k.to_owned(), pv.to_owned());
-            tss.push(TimeSeries {
-                labels: labels_from_hashmap(&labs),
-                samples: vec![Sample {
-                    value: !(pv == v) as usize as f64,
-                    timestamp,
-                }],
-            });
-        }
-    }
-    dbg!(tss)
+    let submetrics: HashMap<String, String> = metric_values.into_iter().collect();
+    let encoded = serde_json::to_string(&submetrics).unwrap_or("Encoding failed!".into());
+    labels.insert("__submetrics__".into(), encoded);
+    vec![TimeSeries {
+        labels: labels_from_hashmap(&labels),
+        samples: vec![Sample {
+            value: 1.0,
+            timestamp,
+        }],
+    }]
 }
 pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
     labels
@@ -237,8 +229,8 @@ async fn polling_metric_loop<Args>(
                     labels: labels_from_hashmap(&owned_labels),
                 }]
             }
-            MetricOutput::SampleForMultiplexing((sample, keys_to_multiplex, possible_values)) => {
-                multiplex_samples(sample, owned_labels, keys_to_multiplex, possible_values)
+            MetricOutput::SampleForStringEncoding((sample, keys_to_encode)) => {
+                encode_submetrics(sample, owned_labels, keys_to_encode)
             }
         };
         for ts in tss {
@@ -284,11 +276,7 @@ fn parsing_error<T: std::fmt::Debug>(
 fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult<'_> {
     match config.dtype {
         DynamicMetricDtype::String => Ok((
-            MetricOutput::SampleForMultiplexing((
-                chrono::Utc::now().timestamp_millis(),
-                vec![],
-                vec![],
-            )),
+            MetricOutput::SampleForStringEncoding((chrono::Utc::now().timestamp_millis(), vec![])),
             Some(HashMap::from([("value".into(), redis_value)])),
         )),
         DynamicMetricDtype::Float => {
@@ -373,16 +361,9 @@ pub(crate) async fn dynamic_metric_future(
                                 labels: labels_from_hashmap(&owned_labels),
                             }]
                         }
-                        MetricOutput::SampleForMultiplexing((
-                            sample,
-                            keys_to_multiplex,
-                            possible_values,
-                        )) => multiplex_samples(
-                            sample,
-                            owned_labels,
-                            keys_to_multiplex,
-                            possible_values,
-                        ),
+                        MetricOutput::SampleForStringEncoding((sample, keys_to_encode)) => {
+                            encode_submetrics(sample, owned_labels, keys_to_encode)
+                        }
                     };
                     for ts in tss {
                         if tx.send(ts).is_err() {
@@ -453,7 +434,7 @@ url = \"http://127.0.0.1\"
                 dbg!(ts);
                 assert!(sample.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
             }
-            MetricOutput::SampleForMultiplexing(_) => panic!(),
+            MetricOutput::SampleForStringEncoding(_) => panic!(),
         }
     }
 
@@ -477,7 +458,7 @@ url = \"http://127.0.0.1\"
                 assert_eq!(sample.value, 12.34);
                 assert_eq!(sample.timestamp, 5678);
             }
-            MetricOutput::SampleForMultiplexing(_) => panic!(),
+            MetricOutput::SampleForStringEncoding(_) => panic!(),
         }
     }
 
