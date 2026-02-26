@@ -64,6 +64,7 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
                 extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
                 extra_labels.insert("bec_server".into(), versions.bec_server);
                 extra_labels.insert("bec_widgets".into(), versions.bec_widgets);
+                extra_labels.insert("ophyd_devices".into(), versions.ophyd_devices);
             }
             _ => {
                 return Err(MetricError::Fatal(format!(
