@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.8.0...v1.9.0) (2026-02-26)
+
+
+### Features
+
+* add hostname to all metric labels ([2b7ffa1](https://github.com/bec-project/bec_log_ingestor/commit/2b7ffa1470f02260f03d81df8dc94866b7a9defe))
+
 # [1.8.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.7.1...v1.8.0) (2026-02-24)
 
 
