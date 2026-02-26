@@ -1,3 +1,20 @@
+# [1.10.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.9.0...v1.10.0) (2026-02-26)
+
+
+### Bug Fixes
+
+* always exit with a code ([281e418](https://github.com/bec-project/bec_log_ingestor/commit/281e418ce9d2a6fe89a5b9272d2aeaa8db8b7611))
+* bundle logs push interval ([0289211](https://github.com/bec-project/bec_log_ingestor/commit/0289211ec9253e0189fe86f932b802b180dd3552))
+* update service info struct ([2842974](https://github.com/bec-project/bec_log_ingestor/commit/28429743d52e357f57e187c911b836bbbb7a98cb))
+
+
+### Features
+
+* add service_status_metric ([76b089c](https://github.com/bec-project/bec_log_ingestor/commit/76b089cef6905c4b935295dce533b174ee97f532))
+* multiplex text metrics with values ([fb55147](https://github.com/bec-project/bec_log_ingestor/commit/fb551474c1f75fb82f48d9c5ad09e6c8b289058d))
+* propagate possible values with text metric ([6b6b1fd](https://github.com/bec-project/bec_log_ingestor/commit/6b6b1fdbf8176e8666c0a8e1aed1af7a60685880))
+* push text metric to multiplexer function ([b0f7985](https://github.com/bec-project/bec_log_ingestor/commit/b0f79859a8e8d688c40885844f99f96294bc2385))
+
 # [1.9.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.8.0...v1.9.0) (2026-02-26)
 
 
