@@ -232,6 +232,26 @@ impl ::std::convert::From<&ServiceVersions> for ServiceVersions {
         value.clone()
     }
 }
+
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub enum ServiceStatus {
+    RUNNING = 2,
+    BUSY = 1,
+    IDLE = 0,
+    ERROR = -1,
+}
+#[derive(Debug, PartialEq, serde:: Deserialize, serde::Serialize, Clone)]
+pub struct ServiceStatusPackInternal {
+    pub encoder_name: String,
+    pub type_name: String,
+    pub data: ServiceStatus,
+}
+
+#[derive(Debug, PartialEq, serde:: Deserialize, serde::Serialize, Clone)]
+pub struct ServiceStatusPack {
+    #[serde(rename = "__bec_codec__")]
+    pub bec_codec: ServiceStatusPackInternal,
+}
 #[doc = "Status message\n\nArgs:\n    name (str): Name of the status.\n    status (BECStatus): Value of the BECStatus enum (RUNNING = 2,  BUSY = 1, IDLE = 0, ERROR = -1).\n    info (ServiceInfo | dict): Status info.\n    metadata (dict, optional): Additional metadata."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -281,7 +301,7 @@ pub struct StatusMessage {
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub metadata: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     pub name: ::std::string::String,
-    pub status: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    pub status: ServiceStatusPack,
 }
 impl ::std::convert::From<&StatusMessage> for StatusMessage {
     fn from(value: &StatusMessage) -> Self {

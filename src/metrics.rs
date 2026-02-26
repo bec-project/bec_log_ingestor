@@ -75,6 +75,50 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
     })
 }
 
+const SERVICE_EPS_AND_NAMES: [(&str, &str); 5] = [
+    ("user/services/status/ScanBundler", "scanbundler_status"),
+    ("user/services/status/DeviceServer", "deviceserver_status"),
+    ("user/services/status/ScanServer", "scanserver_status"),
+    ("user/services/status/SciHub", "scihub_status"),
+    (
+        "user/services/status/FileWriterManager",
+        "filewritermanager_status",
+    ),
+];
+
+fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
+    Box::pin(async move {
+        dbg!("collecting service statuses");
+        let mut labels: MetricLabels = HashMap::from([]);
+        for (ep, name) in SERVICE_EPS_AND_NAMES {
+            let val: Vec<u8> = redis.get(&ep).await.map_err(|e| {
+                MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
+            })?;
+            if val.is_empty() {
+                labels.insert(name.into(), "OFFLINE".into());
+                continue;
+            }
+            let status_update_res: Result<StatusMessagePack, _> =
+                rmp_serde::from_slice(val.as_slice());
+            if let Ok(update) = status_update_res {
+                labels.insert(
+                    name.into(),
+                    match update.bec_codec.data.status.bec_codec.data {
+                        crate::status_message::ServiceStatus::RUNNING => "RUNNING",
+                        crate::status_message::ServiceStatus::BUSY => "BUSY",
+                        crate::status_message::ServiceStatus::IDLE => "IDLE",
+                        crate::status_message::ServiceStatus::ERROR => "ERROR",
+                    }
+                    .into(),
+                );
+            } else {
+                labels.insert(name.into(), "STATUS_MESSAGE_PARSE_ERROR".into());
+            }
+        }
+        Ok((sample_now(1.into()), Some(labels)))
+    })
+}
+
 // System info metrics
 fn cpu_usage_pc(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
@@ -106,6 +150,11 @@ fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
             Arc::new(deployment) as RedisMetricFunc,
             "deployment",
             (&config, Some(60), None),
+        ),
+        static_metric_def(
+            Arc::new(service_statuses) as RedisMetricFunc,
+            "service_statuses",
+            (&config, Some(20), None),
         ),
         // System info metrics
         static_metric_def(
@@ -157,7 +206,6 @@ async fn watchdog_loop(
         }
         interval.tick().await;
         println!("Watchdog checking {:?}", futs.lock().await.keys());
-        dbg!(tx.strong_count());
         let finished: Vec<String> = {
             futs.lock()
                 .await
