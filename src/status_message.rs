@@ -226,6 +226,7 @@ pub struct ServiceVersions {
     pub bec_lib: ::std::string::String,
     pub bec_server: ::std::string::String,
     pub bec_widgets: ::std::string::String,
+    pub ophyd_devices: ::std::string::String,
 }
 impl ::std::convert::From<&ServiceVersions> for ServiceVersions {
     fn from(value: &ServiceVersions) -> Self {
@@ -326,7 +327,7 @@ pub struct StatusMessagePack {
 mod tests {
     use super::*;
     use rmp_serde::from_slice;
-    static TEST_MESSAGE_PACKED: [u8; 376] = *b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaBECMessage\xa9type_name\xadStatusMessage\xa4data\x84\xa8metadata\x80\xa4name\xacDeviceServer\xa6status\x81\xad__bec_codec__\x83\xacencoder_name\xa4Enum\xa9type_name\xa9BECStatus\xa4data\x02\xa4info\x81\xad__bec_codec__\x83\xacencoder_name\xa9BaseModel\xa9type_name\xabServiceInfo\xa4data\x84\xa4user\xa5david\xa8hostname\xaasusuwatari\xa9timestamp\xcbA\xda`\x8b\xa6|]\x12\xa8versions\x84\xa7bec_lib\xa63.91.0\xaabec_server\xa63.91.0\xb2bec_ipython_client\xa63.91.0\xabbec_widgets\xa72.45.13";
+    static TEST_MESSAGE_PACKED: [u8; 397] = *b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaBECMessage\xa9type_name\xadStatusMessage\xa4data\x84\xa8metadata\x80\xa4name\xa6SciHub\xa6status\x81\xad__bec_codec__\x83\xacencoder_name\xa4Enum\xa9type_name\xa9BECStatus\xa4data\x02\xa4info\x81\xad__bec_codec__\x83\xacencoder_name\xa9BaseModel\xa9type_name\xabServiceInfo\xa4data\x84\xa4user\xa6perl_d\xa8hostname\xb0perl-d-thinkbook\xa9timestamp\xcbA\xdah\x16\x93.%)\xa8versions\x85\xa7bec_lib\xa63.81.1\xaabec_server\xa63.90.4\xb2bec_ipython_client\xa63.81.1\xabbec_widgets\xa62.41.1\xadophyd_devices\xa61.32.2";
     #[test]
     fn test_deser_status_mesage() {
         let deser: StatusMessagePack = from_slice(&TEST_MESSAGE_PACKED).expect("Failed");
@@ -335,10 +336,10 @@ mod tests {
         match msg.info {
             Info::Object(_) => panic!("should be the other option"),
             Info::ServiceInfo(svc_info) => {
-                assert_eq!(svc_info.bec_codec.data.hostname, "susuwatari");
+                assert_eq!(svc_info.bec_codec.data.hostname, "perl-d-thinkbook");
                 assert_eq!(
                     svc_info.bec_codec.data.versions.unwrap().bec_server,
-                    "3.91.0"
+                    "3.90.4"
                 );
             }
         };
