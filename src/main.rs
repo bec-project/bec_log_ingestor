@@ -75,6 +75,8 @@ async fn run_services(config: &'static IngestorConfig) {
     } else {
         _ = tokio::join!(metrics);
     }
+
+    exit(69) // SERVICE UNAVAILABLE
 }
 
 #[tokio::main]
