@@ -47,8 +47,13 @@ where
     }
 }
 
+pub(crate) enum MetricOutput {
+    NumericalSample(Sample),
+    SampleForMultiplexing(Sample),
+}
+
 pub(crate) type MetricFuncResult<'a> =
-    Result<(Sample, Option<HashMap<String, String>>), MetricError>;
+    Result<(MetricOutput, Option<HashMap<String, String>>), MetricError>;
 pub(crate) type PinMetricResultFut<'a> =
     Pin<Box<dyn Future<Output = MetricFuncResult<'a>> + Send + 'a>>;
 pub(crate) type SimpleMetricFunc = Arc<dyn AsyncMetricFunc<()> + Send>;
@@ -99,6 +104,12 @@ pub(crate) fn sample_now(value: f64) -> Sample {
         timestamp: chrono::Utc::now().timestamp_millis(),
         value,
     }
+}
+pub(crate) fn numerical_sample_now(value: f64) -> MetricOutput {
+    MetricOutput::NumericalSample(Sample {
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        value,
+    })
 }
 pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
     labels
@@ -180,7 +191,7 @@ async fn polling_metric_loop<Args>(
         }
         interval.tick().await;
         let metric_res = func.call(&mut args).await;
-        let (sample, opt_extra_labels) = match metric_res {
+        let (output, opt_extra_labels) = match metric_res {
             Err(MetricError::Fatal(msg)) => {
                 println!("FATAL: {msg}");
                 break;
@@ -195,13 +206,17 @@ async fn polling_metric_loop<Args>(
         if let Some(extra_labels) = opt_extra_labels {
             owned_labels.extend(extra_labels);
         }
-        if tx
-            .send(TimeSeries {
-                labels: labels_from_hashmap(&owned_labels),
-                samples: vec![sample],
-            })
-            .is_err()
-        {
+        let (samples, labels): (Vec<Sample>, Vec<Label>) = {
+            match output {
+                MetricOutput::NumericalSample(sample) => {
+                    (vec![sample], labels_from_hashmap(&owned_labels))
+                }
+                MetricOutput::SampleForMultiplexing(sample) => {
+                    (vec![sample], labels_from_hashmap(&owned_labels))
+                }
+            }
+        };
+        if tx.send(TimeSeries { labels, samples }).is_err() {
             break;
         }
     }
@@ -241,20 +256,20 @@ fn parsing_error<T: std::fmt::Debug>(
 fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult<'_> {
     match config.dtype {
         DynamicMetricDtype::String => Ok((
-            sample_now(1.0),
+            MetricOutput::SampleForMultiplexing(sample_now(1.0)),
             Some(HashMap::from([("value".into(), redis_value)])),
         )),
         DynamicMetricDtype::Float => {
             let res = redis_value
                 .parse::<f64>()
                 .map_err(|e| parsing_error(&config, &redis_value, e.to_string()))?;
-            Ok((sample_now(res), None))
+            Ok((numerical_sample_now(res), None))
         }
         DynamicMetricDtype::Int => {
             let res = redis_value
                 .parse::<i64>()
                 .map_err(|e| parsing_error(&config, &redis_value, e.to_string()))?;
-            Ok((sample_now(res as f64), None))
+            Ok((numerical_sample_now(res as f64), None))
         }
     }
 }
@@ -304,7 +319,7 @@ pub(crate) async fn dynamic_metric_future(
                 .on_message()
                 .map(|msg: Msg| {
                     let payload: String = msg.get_payload().expect("Failed to extract payload!");
-                    let (sample, opt_extra_labels) =
+                    let (output, opt_extra_labels) =
                         match parse_redis_value(&config, payload.into()) {
                             Err(MetricError::Fatal(error_msg)) => {
                                 panic!("FATAL: {error_msg}")
@@ -319,13 +334,15 @@ pub(crate) async fn dynamic_metric_future(
                     if let Some(extra_labels) = opt_extra_labels {
                         owned_labels.extend(extra_labels);
                     }
-                    if tx
-                        .send(TimeSeries {
-                            labels: labels_from_hashmap(&owned_labels),
-                            samples: vec![sample],
-                        })
-                        .is_err()
-                    {
+                    let (samples, labels) = match output {
+                        MetricOutput::NumericalSample(sample) => {
+                            (vec![sample], labels_from_hashmap(&owned_labels))
+                        }
+                        MetricOutput::SampleForMultiplexing(sample) => {
+                            (vec![sample], labels_from_hashmap(&owned_labels))
+                        }
+                    };
+                    if tx.send(TimeSeries { labels, samples }).is_err() {
                         panic!("TASK-FATAL: error transmitting metric to publisher channel");
                     }
                 })
@@ -357,10 +374,10 @@ mod tests {
 
     fn test_metric(_system: &mut System) -> PinMetricResultFut<'_> {
         sync_metric(Ok((
-            Sample {
+            MetricOutput::NumericalSample(Sample {
                 value: 12.34,
                 timestamp: 5678,
-            },
+            }),
             None,
         )))
     }
@@ -406,8 +423,13 @@ url = \"http://127.0.0.1\"
     async fn test_sync_metric() {
         let mut sys = System::new();
         let result = block_on(test_metric(&mut sys)).unwrap().0;
-        assert_eq!(result.value, 12.34);
-        assert_eq!(result.timestamp, 5678);
+        match result {
+            MetricOutput::NumericalSample(sample) => {
+                assert_eq!(sample.value, 12.34);
+                assert_eq!(sample.timestamp, 5678);
+            }
+            MetricOutput::SampleForMultiplexing(_) => panic!(),
+        }
     }
 
     struct TestMetricEnds {
@@ -423,9 +445,9 @@ url = \"http://127.0.0.1\"
             let x = lock_count.get_mut();
             let res = match x.clone() {
                 0 => sync_metric(Err(MetricError::Retryable("Busy".into()))),
-                1 => sync_metric(Ok((sample_now(1.0), None))),
-                2 => sync_metric(Ok((sample_now(2.0), None))),
-                3 => sync_metric(Ok((sample_now(3.0), None))),
+                1 => sync_metric(Ok((numerical_sample_now(1.0), None))),
+                2 => sync_metric(Ok((numerical_sample_now(2.0), None))),
+                3 => sync_metric(Ok((numerical_sample_now(3.0), None))),
                 _ => sync_metric(Err(MetricError::Fatal("Finished".into()))),
             };
             *x += 1;
