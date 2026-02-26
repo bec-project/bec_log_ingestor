@@ -74,6 +74,9 @@ pub struct RedisConfig {
     pub consumer_id: String,
 }
 
+fn default_push_interval() -> MetricInterval {
+    return MetricInterval::Secondly(3);
+}
 #[derive(Clone, Debug, Deserialize)]
 pub struct LokiConfig {
     pub url: String,
@@ -82,6 +85,8 @@ pub struct LokiConfig {
     pub chunk_size: u16,
     #[serde(default = "default_beamline_name")]
     pub beamline_name: String,
+    #[serde(default = "default_push_interval")]
+    pub push_interval: MetricInterval,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]

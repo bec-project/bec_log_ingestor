@@ -1,4 +1,4 @@
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::Interval};
 
 use crate::{
     config::{IngestorConfig, LokiConfig},
@@ -49,8 +49,10 @@ pub async fn consumer_loop(
 ) {
     let mut buffer: Vec<LogMsg> = Vec::with_capacity(config.loki.chunk_size.into());
     let client = reqwest::Client::new();
+    let mut interval: Interval = (&config.loki.push_interval).into();
 
     loop {
+        interval.tick().await;
         let open = rx
             .recv_many(&mut buffer, config.loki.chunk_size.into())
             .await;
