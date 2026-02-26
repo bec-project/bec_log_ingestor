@@ -111,6 +111,16 @@ pub(crate) fn numerical_sample_now(value: f64) -> MetricOutput {
         value,
     })
 }
+pub(crate) fn multiplex_samples(
+    sample: Sample,
+    owned_labels: MetricLabels,
+    possible_values: Vec<String>,
+) -> Vec<TimeSeries> {
+    vec![TimeSeries {
+        samples: vec![sample],
+        labels: labels_from_hashmap(&owned_labels),
+    }]
+}
 pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
     labels
         .iter()
@@ -206,18 +216,22 @@ async fn polling_metric_loop<Args>(
         if let Some(extra_labels) = opt_extra_labels {
             owned_labels.extend(extra_labels);
         }
-        let (samples, labels): (Vec<Sample>, Vec<Label>) = {
-            match output {
-                MetricOutput::NumericalSample(sample) => {
-                    (vec![sample], labels_from_hashmap(&owned_labels))
-                }
-                MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
-                    (vec![sample], labels_from_hashmap(&owned_labels))
-                }
+        let tss: Vec<TimeSeries> = match output {
+            MetricOutput::NumericalSample(sample) => {
+                vec![TimeSeries {
+                    samples: vec![sample],
+                    labels: labels_from_hashmap(&owned_labels),
+                }]
+            }
+            MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
+                multiplex_samples(sample, owned_labels, possible_values)
             }
         };
-        if tx.send(TimeSeries { labels, samples }).is_err() {
-            break;
+        for ts in tss {
+            if tx.send(ts).is_err() {
+                println!("TASK-FATAL: error transmitting metric to publisher channel");
+                break;
+            }
         }
     }
 }
@@ -334,16 +348,21 @@ pub(crate) async fn dynamic_metric_future(
                     if let Some(extra_labels) = opt_extra_labels {
                         owned_labels.extend(extra_labels);
                     }
-                    let (samples, labels) = match output {
+                    let tss: Vec<TimeSeries> = match output {
                         MetricOutput::NumericalSample(sample) => {
-                            (vec![sample], labels_from_hashmap(&owned_labels))
+                            vec![TimeSeries {
+                                samples: vec![sample],
+                                labels: labels_from_hashmap(&owned_labels),
+                            }]
                         }
                         MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
-                            (vec![sample], labels_from_hashmap(&owned_labels))
+                            multiplex_samples(sample, owned_labels, possible_values)
                         }
                     };
-                    if tx.send(TimeSeries { labels, samples }).is_err() {
-                        panic!("TASK-FATAL: error transmitting metric to publisher channel");
+                    for ts in tss {
+                        if tx.send(ts).is_err() {
+                            panic!("TASK-FATAL: error transmitting metric to publisher channel");
+                        }
                     }
                 })
                 .collect::<()>()
