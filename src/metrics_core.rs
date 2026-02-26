@@ -32,12 +32,12 @@ pub enum MetricError {
     Fatal(String),
 }
 
-pub trait AsyncFnMut<A>: Send + Sync {
+pub trait AsyncMetricFunc<A>: Send + Sync {
     fn call<'a>(&self, args: &'a mut A) -> PinMetricResultFut<'a>;
 }
 
 // #[async_trait]
-impl<F, A> AsyncFnMut<A> for F
+impl<F, A> AsyncMetricFunc<A> for F
 where
     F: Fn(&mut A) -> PinMetricResultFut + Send + Sync,
     A: Send,
@@ -51,9 +51,9 @@ pub(crate) type MetricFuncResult<'a> =
     Result<(Sample, Option<HashMap<String, String>>), MetricError>;
 pub(crate) type PinMetricResultFut<'a> =
     Pin<Box<dyn Future<Output = MetricFuncResult<'a>> + Send + 'a>>;
-pub(crate) type SimpleMetricFunc = Arc<dyn AsyncFnMut<()> + Send>;
-pub(crate) type SysMetricFunc = Arc<dyn AsyncFnMut<System> + Send>;
-pub(crate) type RedisMetricFunc = Arc<dyn AsyncFnMut<MultiplexedConnection> + Send>;
+pub(crate) type SimpleMetricFunc = Arc<dyn AsyncMetricFunc<()> + Send>;
+pub(crate) type SysMetricFunc = Arc<dyn AsyncMetricFunc<System> + Send>;
+pub(crate) type RedisMetricFunc = Arc<dyn AsyncMetricFunc<MultiplexedConnection> + Send>;
 
 pub(crate) type MetricLabels = HashMap<String, String>;
 pub(crate) type MetricDefaultIntervalSeconds = Option<u32>;
@@ -168,7 +168,7 @@ pub(crate) fn metric_spawner(
 /// hashmap of the associated labels, and runs a loop awaiting the interval ticks which sends a prometheus/mimir
 /// TimeSeries to the channel, ready for the consumer loop in metrics.rs to bundle and send to the database
 async fn polling_metric_loop<Args>(
-    func: Arc<dyn AsyncFnMut<Args>>,
+    func: Arc<dyn AsyncMetricFunc<Args>>,
     mut args: Args,
     mut interval: Interval,
     tx: UnboundedSender<TimeSeries>,
@@ -413,7 +413,7 @@ url = \"http://127.0.0.1\"
     struct TestMetricEnds {
         count: Mutex<UnsafeCell<u16>>,
     }
-    impl AsyncFnMut<()> for TestMetricEnds {
+    impl AsyncMetricFunc<()> for TestMetricEnds {
         fn call<'a>(&self, _: &'a mut ()) -> PinMetricResultFut<'a> {
             let lock_count_res = self.count.try_lock();
             if lock_count_res.is_err() {
