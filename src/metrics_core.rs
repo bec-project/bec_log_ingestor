@@ -49,7 +49,7 @@ where
 
 pub(crate) enum MetricOutput {
     NumericalSample(Sample),
-    SampleForMultiplexing((Sample, Vec<String>)),
+    SampleForMultiplexing((i64, Vec<String>, Vec<String>)),
 }
 
 pub(crate) type MetricFuncResult<'a> =
@@ -99,12 +99,6 @@ pub(crate) fn sync_metric(result: MetricFuncResult) -> PinMetricResultFut {
 }
 
 // Return a Prometheus Sample struct for the given value with a timestamp of the current UTC time
-pub(crate) fn sample_now(value: f64) -> Sample {
-    Sample {
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        value,
-    }
-}
 pub(crate) fn numerical_sample_now(value: f64) -> MetricOutput {
     MetricOutput::NumericalSample(Sample {
         timestamp: chrono::Utc::now().timestamp_millis(),
@@ -112,14 +106,35 @@ pub(crate) fn numerical_sample_now(value: f64) -> MetricOutput {
     })
 }
 pub(crate) fn multiplex_samples(
-    sample: Sample,
-    owned_labels: MetricLabels,
+    timestamp: i64,
+    mut labels: MetricLabels,
+    keys_to_multiplex: Vec<String>,
     possible_values: Vec<String>,
 ) -> Vec<TimeSeries> {
-    vec![TimeSeries {
-        samples: vec![sample],
-        labels: labels_from_hashmap(&owned_labels),
-    }]
+    let mut tss: Vec<TimeSeries> = vec![];
+
+    let mut metric_values: Vec<(String, String)> = vec![];
+    for k in keys_to_multiplex {
+        if let Some(v) = labels.remove(&k) {
+            metric_values.push((k, v));
+        }
+    }
+
+    for (k, v) in &metric_values {
+        for pv in &possible_values {
+            let mut labs = labels.clone();
+            labs.insert("__submetric_name__".into(), k.to_owned());
+            labs.insert("__submetric_value__".into(), pv.to_owned());
+            tss.push(TimeSeries {
+                labels: labels_from_hashmap(&labs),
+                samples: vec![Sample {
+                    value: (pv == v) as usize as f64,
+                    timestamp,
+                }],
+            });
+        }
+    }
+    dbg!(tss)
 }
 pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
     labels
@@ -223,8 +238,8 @@ async fn polling_metric_loop<Args>(
                     labels: labels_from_hashmap(&owned_labels),
                 }]
             }
-            MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
-                multiplex_samples(sample, owned_labels, possible_values)
+            MetricOutput::SampleForMultiplexing((sample, keys_to_multiplex, possible_values)) => {
+                multiplex_samples(sample, owned_labels, keys_to_multiplex, possible_values)
             }
         };
         for ts in tss {
@@ -270,7 +285,11 @@ fn parsing_error<T: std::fmt::Debug>(
 fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult<'_> {
     match config.dtype {
         DynamicMetricDtype::String => Ok((
-            MetricOutput::SampleForMultiplexing((sample_now(1.0), vec![])),
+            MetricOutput::SampleForMultiplexing((
+                chrono::Utc::now().timestamp_millis(),
+                vec![],
+                vec![],
+            )),
             Some(HashMap::from([("value".into(), redis_value)])),
         )),
         DynamicMetricDtype::Float => {
@@ -355,9 +374,16 @@ pub(crate) async fn dynamic_metric_future(
                                 labels: labels_from_hashmap(&owned_labels),
                             }]
                         }
-                        MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
-                            multiplex_samples(sample, owned_labels, possible_values)
-                        }
+                        MetricOutput::SampleForMultiplexing((
+                            sample,
+                            keys_to_multiplex,
+                            possible_values,
+                        )) => multiplex_samples(
+                            sample,
+                            owned_labels,
+                            keys_to_multiplex,
+                            possible_values,
+                        ),
                     };
                     for ts in tss {
                         if tx.send(ts).is_err() {
@@ -420,11 +446,16 @@ url = \"http://127.0.0.1\"
 
     #[test]
     fn test_sample_now() {
-        let samp = sample_now(0.0);
+        let samp = numerical_sample_now(0.0);
         let ts = chrono::Utc::now().timestamp_millis();
-        dbg!(&samp.timestamp);
-        dbg!(ts);
-        assert!(samp.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
+        match samp {
+            MetricOutput::NumericalSample(sample) => {
+                dbg!(&sample.timestamp);
+                dbg!(ts);
+                assert!(sample.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
+            }
+            MetricOutput::SampleForMultiplexing(_) => panic!(),
+        }
     }
 
     #[test]
