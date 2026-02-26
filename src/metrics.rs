@@ -458,6 +458,7 @@ mod tests {
                 },
                 chunk_size: 5,
                 beamline_name: "test".into(),
+                push_interval: MetricInterval::Secondly(3),
             },
             metrics: test_config("".into(), Some(intervals.clone())),
             enable_metrics: false,
