@@ -3,9 +3,10 @@ use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
         MetricDefinition, MetricDefinitions, MetricError, MetricFutures, MetricLabels,
-        PinMetricResultFut, RedisMetricFunc, SysMetricFunc, metric_spawner, numerical_sample_now,
+        MetricOutput, PinMetricResultFut, RedisMetricFunc, SysMetricFunc, metric_spawner,
+        numerical_sample_now,
         prometheus::{TimeSeries, WriteRequest},
-        static_metric_def, sync_metric,
+        sample_now, static_metric_def, sync_metric,
     },
     status_message::StatusMessagePack,
 };
@@ -86,6 +87,42 @@ const SERVICE_EPS_AND_NAMES: [(&str, &str); 5] = [
     ),
 ];
 
+enum ServiceStatusValue {
+    Offline,
+    Running,
+    Busy,
+    Idle,
+    Error,
+    StatusMessageParseError,
+}
+impl Into<String> for &ServiceStatusValue {
+    fn into(self) -> String {
+        match self {
+            ServiceStatusValue::Offline => "OFFLINE".into(),
+            ServiceStatusValue::Running => "RUNNING".into(),
+            ServiceStatusValue::Busy => "BUSY".into(),
+            ServiceStatusValue::Idle => "IDLE".into(),
+            ServiceStatusValue::Error => "ERROR".into(),
+            ServiceStatusValue::StatusMessageParseError => "STATUS_MESSAGE_PARSE_ERROR".into(),
+        }
+    }
+}
+impl ServiceStatusValue {
+    pub fn list_all() -> Vec<String> {
+        [
+            ServiceStatusValue::Offline,
+            ServiceStatusValue::Running,
+            ServiceStatusValue::Busy,
+            ServiceStatusValue::Idle,
+            ServiceStatusValue::Error,
+            ServiceStatusValue::StatusMessageParseError,
+        ]
+        .iter()
+        .map(|i| i.into())
+        .collect()
+    }
+}
+
 fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
     Box::pin(async move {
         dbg!("collecting service statuses");
@@ -95,7 +132,7 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
                 MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
             })?;
             if val.is_empty() {
-                labels.insert(name.into(), "OFFLINE".into());
+                labels.insert(name.into(), (&ServiceStatusValue::Offline).into());
                 continue;
             }
             let status_update_res: Result<StatusMessagePack, _> =
@@ -104,18 +141,34 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
                 labels.insert(
                     name.into(),
                     match update.bec_codec.data.status.bec_codec.data {
-                        crate::status_message::ServiceStatus::RUNNING => "RUNNING",
-                        crate::status_message::ServiceStatus::BUSY => "BUSY",
-                        crate::status_message::ServiceStatus::IDLE => "IDLE",
-                        crate::status_message::ServiceStatus::ERROR => "ERROR",
-                    }
-                    .into(),
+                        crate::status_message::ServiceStatus::RUNNING => {
+                            (&ServiceStatusValue::Running).into()
+                        }
+                        crate::status_message::ServiceStatus::BUSY => {
+                            (&ServiceStatusValue::Busy).into()
+                        }
+                        crate::status_message::ServiceStatus::IDLE => {
+                            (&ServiceStatusValue::Idle).into()
+                        }
+                        crate::status_message::ServiceStatus::ERROR => {
+                            (&ServiceStatusValue::Error).into()
+                        }
+                    },
                 );
             } else {
-                labels.insert(name.into(), "STATUS_MESSAGE_PARSE_ERROR".into());
+                labels.insert(
+                    name.into(),
+                    (&ServiceStatusValue::StatusMessageParseError).into(),
+                );
             }
         }
-        Ok((sample_now(1.into()), Some(labels)))
+        Ok((
+            MetricOutput::SampleForMultiplexing((
+                sample_now(1.into()),
+                ServiceStatusValue::list_all(),
+            )),
+            Some(labels),
+        ))
     })
 }
 

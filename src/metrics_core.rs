@@ -49,7 +49,7 @@ where
 
 pub(crate) enum MetricOutput {
     NumericalSample(Sample),
-    SampleForMultiplexing(Sample),
+    SampleForMultiplexing((Sample, Vec<String>)),
 }
 
 pub(crate) type MetricFuncResult<'a> =
@@ -211,7 +211,7 @@ async fn polling_metric_loop<Args>(
                 MetricOutput::NumericalSample(sample) => {
                     (vec![sample], labels_from_hashmap(&owned_labels))
                 }
-                MetricOutput::SampleForMultiplexing(sample) => {
+                MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
                     (vec![sample], labels_from_hashmap(&owned_labels))
                 }
             }
@@ -256,7 +256,7 @@ fn parsing_error<T: std::fmt::Debug>(
 fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult<'_> {
     match config.dtype {
         DynamicMetricDtype::String => Ok((
-            MetricOutput::SampleForMultiplexing(sample_now(1.0)),
+            MetricOutput::SampleForMultiplexing((sample_now(1.0), vec![])),
             Some(HashMap::from([("value".into(), redis_value)])),
         )),
         DynamicMetricDtype::Float => {
@@ -338,7 +338,7 @@ pub(crate) async fn dynamic_metric_future(
                         MetricOutput::NumericalSample(sample) => {
                             (vec![sample], labels_from_hashmap(&owned_labels))
                         }
-                        MetricOutput::SampleForMultiplexing(sample) => {
+                        MetricOutput::SampleForMultiplexing((sample, possible_values)) => {
                             (vec![sample], labels_from_hashmap(&owned_labels))
                         }
                     };
