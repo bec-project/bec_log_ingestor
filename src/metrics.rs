@@ -3,9 +3,9 @@ use crate::{
     config::{IngestorConfig, MetricsConfig},
     metrics_core::{
         MetricDefinition, MetricDefinitions, MetricError, MetricFutures, MetricLabels,
-        PinMetricResultFut, RedisMetricFunc, SysMetricFunc, metric_spawner,
+        PinMetricResultFut, RedisMetricFunc, SysMetricFunc, metric_spawner, numerical_sample_now,
         prometheus::{TimeSeries, WriteRequest},
-        sample_now, static_metric_def, sync_metric,
+        static_metric_def, sync_metric,
     },
     status_message::StatusMessagePack,
 };
@@ -71,22 +71,31 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
             }
         }
         // extra_labels.extend(get_versions());
-        Ok((sample_now(1.into()), Some(extra_labels)))
+        Ok((numerical_sample_now(1.into()), Some(extra_labels)))
     })
 }
 
 // System info metrics
 fn cpu_usage_pc(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
-    sync_metric(Ok((sample_now(system.global_cpu_usage() as f64), None)))
+    sync_metric(Ok((
+        numerical_sample_now(system.global_cpu_usage() as f64),
+        None,
+    )))
 }
 fn ram_used_bytes(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-    sync_metric(Ok((sample_now(system.used_memory() as f64), None)))
+    sync_metric(Ok((
+        numerical_sample_now(system.used_memory() as f64),
+        None,
+    )))
 }
 fn ram_avail_bytes(system: &mut System) -> PinMetricResultFut<'_> {
     system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-    sync_metric(Ok((sample_now(system.available_memory() as f64), None)))
+    sync_metric(Ok((
+        numerical_sample_now(system.available_memory() as f64),
+        None,
+    )))
 }
 
 /// Defines the list of all metrics to run
