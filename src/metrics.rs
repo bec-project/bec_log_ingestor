@@ -6,7 +6,7 @@ use crate::{
         MetricOutput, PinMetricResultFut, RedisMetricFunc, SysMetricFunc, metric_spawner,
         numerical_sample_now,
         prometheus::{TimeSeries, WriteRequest},
-        sample_now, static_metric_def, sync_metric,
+        static_metric_def, sync_metric,
     },
     status_message::StatusMessagePack,
 };
@@ -164,7 +164,11 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
         }
         Ok((
             MetricOutput::SampleForMultiplexing((
-                sample_now(1.into()),
+                chrono::Utc::now().timestamp_millis(),
+                SERVICE_EPS_AND_NAMES
+                    .iter()
+                    .map(|(_, n)| (*n).into())
+                    .collect(),
                 ServiceStatusValue::list_all(),
             )),
             Some(labels),
