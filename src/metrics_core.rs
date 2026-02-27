@@ -134,7 +134,7 @@ pub(crate) fn multiplex_samples(
             });
         }
     }
-    dbg!(tss)
+    tss
 }
 pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
     labels

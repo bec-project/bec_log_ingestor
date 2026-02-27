@@ -126,7 +126,6 @@ impl ServiceStatusValue {
 
 fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
     Box::pin(async move {
-        dbg!("collecting service statuses");
         let mut labels: MetricLabels = HashMap::from([]);
         for (ep, name) in SERVICE_EPS_AND_NAMES {
             let val: Vec<u8> = redis.get(&ep).await.map_err(|e| {
