@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.10.0...v1.10.1) (2026-02-27)
+
+
+### Bug Fixes
+
+* reduce log verbosity ([52a28f8](https://github.com/bec-project/bec_log_ingestor/commit/52a28f828d43b0917b371d95712023cfafdfdfb3))
+
 # [1.10.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.9.0...v1.10.0) (2026-02-26)
 
 
