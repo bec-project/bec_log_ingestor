@@ -91,7 +91,7 @@ pub fn error_log_item() -> LogMessagePack {
                             seconds: 0.0,
                         },
                         exception: None,
-                        extra: {}.into(),
+                        extra: ().into(),
                         file: File {
                             name: "".into(),
                             path: "".into(),
@@ -122,7 +122,7 @@ pub fn error_log_item() -> LogMessagePack {
                     service_name: "".into(),
                     text: "".into(),
                 },
-                metadata: {}.into(),
+                metadata: ().into(),
             },
         },
     }

@@ -40,7 +40,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
     Box::pin(async move {
         let key = "user/services/status/DeviceServer";
-        let val: Vec<u8> = redis.get(&key).await.map_err(|e| {
+        let val: Vec<u8> = redis.get(key).await.map_err(|e| {
             MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
         })?;
         if val.is_empty() {
@@ -52,7 +52,7 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
             rmp_serde::from_slice(val.as_slice()).map_err(|e| {
                 MetricError::Retryable(format!(
                     "Failed to parse status message from redis: {}",
-                    e.to_string()
+                    e
                 ))
             })?;
         let mut extra_labels: MetricLabels = HashMap::from([]);
@@ -96,9 +96,9 @@ enum ServiceStatusValue {
     Error,
     StatusMessageParseError,
 }
-impl Into<String> for &ServiceStatusValue {
-    fn into(self) -> String {
-        match self {
+impl From<&ServiceStatusValue> for String {
+    fn from(val: &ServiceStatusValue) -> Self {
+        match val {
             ServiceStatusValue::Offline => "OFFLINE".into(),
             ServiceStatusValue::Running => "RUNNING".into(),
             ServiceStatusValue::Busy => "BUSY".into(),
@@ -129,7 +129,7 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
         dbg!("collecting service statuses");
         let mut labels: MetricLabels = HashMap::from([]);
         for (ep, name) in SERVICE_EPS_AND_NAMES {
-            let val: Vec<u8> = redis.get(&ep).await.map_err(|e| {
+            let val: Vec<u8> = redis.get(ep).await.map_err(|e| {
                 MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
             })?;
             if val.is_empty() {
@@ -207,28 +207,28 @@ fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
         static_metric_def(
             Arc::new(deployment) as RedisMetricFunc,
             "deployment",
-            (&config, Some(60), None),
+            (config, Some(60), None),
         ),
         static_metric_def(
             Arc::new(service_statuses) as RedisMetricFunc,
             "service_statuses",
-            (&config, Some(20), None),
+            (config, Some(20), None),
         ),
         // System info metrics
         static_metric_def(
             Arc::new(cpu_usage_pc) as SysMetricFunc,
             "cpu_usage_pc",
-            (&config, None, None),
+            (config, None, None),
         ),
         static_metric_def(
             Arc::new(ram_used_bytes) as SysMetricFunc,
             "ram_used_bytes",
-            (&config, None, None),
+            (config, None, None),
         ),
         static_metric_def(
             Arc::new(ram_avail_bytes) as SysMetricFunc,
             "ram_avail_bytes",
-            (&config, None, None),
+            (config, None, None),
         ),
     ]);
     // load the dynamically defined metrics from the config
@@ -369,12 +369,12 @@ pub async fn metrics_loop(config: &'static IngestorConfig) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
     let redis_url: String = config.redis.url.full_url();
     let client = redis::Client::open(redis_url.clone())
-        .expect(format!("Failed to connect to redis at {redis_url}!").as_str());
+        .unwrap_or_else(|_| panic!("Failed to connect to redis at {redis_url}!"));
     let redis = client
         .get_multiplexed_async_connection()
         .await
         .expect("Failed to connect to redis!");
-    let metrics = metric_definitions(&config);
+    let metrics = metric_definitions(config);
     let spawner = metric_spawner(tx.clone(), config.clone(), redis.clone());
 
     let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));

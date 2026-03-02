@@ -44,15 +44,14 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
         );
         exit(1)
     }
-    if let Some(ref metric_path) = args.metrics_config {
-        if !metric_path.exists() {
+    if let Some(ref metric_path) = args.metrics_config
+        && !metric_path.exists() {
             println!(
                 "Error, metrics config file not found at {:?}",
                 metric_path.as_path()
             );
             exit(1)
         }
-    }
     (args.config, args.metrics_config)
 }
 

@@ -1,7 +1,6 @@
 use crate::config::IngestorConfig;
 use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
-use rmp_serde;
 use std::{error::Error, thread, time::Duration};
 use tokio::sync::mpsc;
 
@@ -103,17 +102,19 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &'static IngestorC
         &config.redis.consumer_group,
         &config.redis.consumer_id,
     );
-    create_id.expect(&format!(
-        "Failed to create Redis consumer ID {} in group {}!",
-        &config.redis.consumer_id, &config.redis.consumer_group
-    ));
+    create_id.unwrap_or_else(|_| {
+        panic!(
+            "Failed to create Redis consumer ID {} in group {}!",
+            &config.redis.consumer_id, &config.redis.consumer_group
+        )
+    });
 }
 
 fn check_connection(
     redis_conn: &mut redis::Connection,
     config: &'static IngestorConfig,
 ) -> Result<(), ()> {
-    if let Ok(key_exists) = redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
+    if let Ok(key_exists) = redis_conn.exists::<&str, bool>(LOGGING_ENDPOINT[0]) {
         if !key_exists {
             println!("Logging endpoint doesn't exist, exiting.");
             return Err(());
@@ -121,21 +122,21 @@ fn check_connection(
     } else {
         panic!("Something went wrong checking the logs endpoint")
     }
-    setup_consumer_group(redis_conn, &config);
+    setup_consumer_group(redis_conn, config);
     Ok(())
 }
 pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static IngestorConfig) {
     let mut redis_conn =
         create_redis_conn(&config.redis.url.full_url()).expect("Could not connect to Redis!");
-    if check_connection(&mut redis_conn, &config).is_err() {
-        println!("");
+    if check_connection(&mut redis_conn, config).is_err() {
+        println!();
         return;
     }
 
     let stream_read_id: String = ">".into();
 
     'main: loop {
-        let raw_read = read_logs(&mut redis_conn, &stream_read_id, &config);
+        let raw_read = read_logs(&mut redis_conn, &stream_read_id, config);
         if let Ok(response) = raw_read {
             if let (Some(_), packed) = response {
                 if packed.is_empty() {
@@ -155,17 +156,15 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static I
             println!("{:?}", raw_read);
             redis_conn = loop {
                 {
-                    let new_conn = create_redis_conn(&config.redis.url.full_url());
-                    if new_conn.is_err() {
-                        println!("Error reading from redis, retrying connection in 1s");
-                        thread::sleep(Duration::from_millis(1000));
-                    } else {
+                    if let Ok(mut conn) = create_redis_conn(&config.redis.url.full_url()) {
                         println!("Reconnected");
-                        let mut conn = new_conn.unwrap();
-                        if check_connection(&mut conn, &config).is_err() {
+                        if check_connection(&mut conn, config).is_err() {
                             return;
                         }
                         break conn;
+                    } else {
+                        println!("Error reading from redis, retrying connection in 1s");
+                        thread::sleep(Duration::from_millis(1000));
                     }
                 }
             }
