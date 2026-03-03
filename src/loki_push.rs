@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use tokio::{sync::mpsc, time::Interval};
 
@@ -37,7 +37,7 @@ fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_jso
         .map(|e| json_from_logmsg(e, &config.loki))
         .collect::<Vec<(serde_json::Value, (String, String))>>();
 
-    let mut map: HashMap<(String, String), Vec<serde_json::Value>> = HashMap::new();
+    let mut map: BTreeMap<(String, String), Vec<serde_json::Value>> = BTreeMap::new();
 
     for (value, key_pair) in values {
         map.entry(key_pair).or_insert_with(Vec::new).push(value);
@@ -175,10 +175,7 @@ mod tests {
     fn test_make_docs_values_empty() {
         let records: Vec<LogMsg> = vec![];
         let docs = make_json_body(&records, config());
-        assert_eq!(
-            docs.to_string(),
-            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[]}]}"
-        );
+        assert_eq!(docs.to_string(), "{\"streams\":[]}");
     }
 
     #[test]
@@ -190,9 +187,15 @@ mod tests {
         .into();
         let docs = make_json_body(&vec![record.clone()], config());
         // Each record should produce two JSON bodies (action + doc)
+        let hostname = gethostname::gethostname()
+            .into_string()
+            .unwrap_or("failed_to_parse_hostname".into());
         assert_eq!(
             docs.to_string(),
-            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[[\"0\",\"hello\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"info\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}]]}]}"
+            format!(
+                "{{\"streams\":[{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"info\",\"service_name\":\"test_service\"}},\"values\":[[\"0\",\"hello\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}}]]}}]}}",
+                hostname
+            )
         );
     }
 
@@ -209,9 +212,15 @@ mod tests {
         }
         .into();
         let docs = make_json_body(&vec![record1, record2], config());
+        let hostname = gethostname::gethostname()
+            .into_string()
+            .unwrap_or("failed_to_parse_hostname".into());
         assert_eq!(
             docs.to_string(),
-            "{\"streams\":[{\"stream\":{\"label\":\"bec_logs_x99xa\"},\"values\":[[\"0\",\"a\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"info\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}],[\"0\",\"b\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"log_type\":\"warn\",\"module\":\"\",\"proc_id\":\"0\",\"service_name\":\"test_service\"}]]}]}"
+            format!(
+                "{{\"streams\":[{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"info\",\"service_name\":\"test_service\"}},\"values\":[[\"0\",\"a\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}}]]}},{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"warn\",\"service_name\":\"test_service\"}},\"values\":[[\"0\",\"b\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}}]]}}]}}",
+                &hostname, &hostname
+            )
         );
     }
 }
