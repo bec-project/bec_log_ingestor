@@ -35,7 +35,9 @@ fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_jso
         "streams" : [
             {
                 "stream" :{
-                    "label": format!("bec_logs_{}", &config.loki.beamline_name)
+                    "label": format!("bec_logs_{}", &config.loki.beamline_name),
+                    "beamline": &config.loki.beamline_name,
+                    "hostname": &config.hostname,
                 },
                 "values": values
             }
