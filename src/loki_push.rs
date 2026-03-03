@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tokio::{sync::mpsc, time::Interval};
 
 use crate::{
@@ -6,43 +8,59 @@ use crate::{
 };
 
 /// Convert a LogRecord to the document we want Loki to ingest
-fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> serde_json::Value {
-    serde_json::json!([
-        msg.record.time.as_epoch_nanos(),
-        msg.record.message,
-        {
-            "file_name": msg.record.file.name,
-            "file_location": msg.record.file.path,
-            "function": msg.record.function,
-            "line": msg.record.line.to_string(),
-            "log_type": msg.record.level.name,
-            "module": msg.record.module,
-            "service_name": msg.service_name,
-            "beamline_name": config.beamline_name,
-            "proc_id": msg.record.process.id.to_string(),
-            "exception": msg.record.exception.clone().unwrap_or("None".into())
-        }
-    ])
+fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> (serde_json::Value, (String, String)) {
+    (
+        serde_json::json!([
+            msg.record.time.as_epoch_nanos(),
+            msg.record.message,
+            {
+                "file_name": msg.record.file.name,
+                "file_location": msg.record.file.path,
+                "function": msg.record.function,
+                "line": msg.record.line.to_string(),
+                "module": msg.record.module,
+                "beamline_name": config.beamline_name,
+                "proc_id": msg.record.process.id.to_string(),
+                "exception": msg.record.exception.clone().unwrap_or("None".into())
+            }
+        ]),
+        (
+            msg.record.level.name.to_owned(),
+            msg.service_name.to_owned(),
+        ),
+    )
 }
 
 fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_json::Value {
     let values = msgs
         .iter()
         .map(|e| json_from_logmsg(e, &config.loki))
-        .collect::<Vec<serde_json::Value>>();
+        .collect::<Vec<(serde_json::Value, (String, String))>>();
 
-    serde_json::json!({
-        "streams" : [
-            {
+    let mut map: HashMap<(String, String), Vec<serde_json::Value>> = HashMap::new();
+
+    for (value, key_pair) in values {
+        map.entry(key_pair).or_insert_with(Vec::new).push(value);
+    }
+
+    let streams: Vec<serde_json::Value> = map
+        .iter()
+        .map(|(k, v)| {
+            serde_json::json!({
                 "stream" :{
-                    "label": format!("bec_logs_{}", &config.loki.beamline_name),
-                    "beamline": &config.loki.beamline_name,
+                    "label": "bec_logs",
                     "hostname": &config.hostname,
+                    "level": k.0,
+                    "service_name":k.1
                 },
-                "values": values
-            }
-        ]
-    })
+                "values": v
+            })
+        })
+        .collect();
+
+    dbg!(serde_json::json!({
+        "streams": streams
+    }))
 }
 
 pub async fn consumer_loop(
