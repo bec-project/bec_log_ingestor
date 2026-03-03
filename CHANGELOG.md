@@ -1,3 +1,11 @@
+# [1.11.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.10.1...v1.11.0) (2026-03-03)
+
+
+### Features
+
+* add beamline and hostname labels to loki ([648f771](https://github.com/bec-project/bec_log_ingestor/commit/648f771ac9fa70105625a57b59d52479d2de4e9b))
+* promote level and service name to label ([ec43649](https://github.com/bec-project/bec_log_ingestor/commit/ec43649d57240f9904ae3273810738942be31cb9))
+
 ## [1.10.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.10.0...v1.10.1) (2026-02-27)
 
 
