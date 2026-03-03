@@ -1,5 +1,7 @@
 [Unit]
 Description=bec-log-ingestor service
+After=redis.service
+Requires=redis.service
 StartLimitBurst=3
 StartLimitIntervalSec=120
 
