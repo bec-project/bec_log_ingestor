@@ -39,7 +39,7 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
     let args = Args::parse();
     if !args.config.exists() {
         println!(
-            "Error, config file not found at {:?}",
+            "ERROR: config file not found at {:?}",
             args.config.as_path()
         );
         exit(1)
@@ -47,7 +47,7 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
     if let Some(ref metric_path) = args.metrics_config {
         if !metric_path.exists() {
             println!(
-                "Error, metrics config file not found at {:?}",
+                "ERROR: metrics config file not found at {:?}",
                 metric_path.as_path()
             );
             exit(1)
@@ -57,17 +57,17 @@ fn config_paths() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
 }
 
 async fn run_services(config: &'static IngestorConfig) {
-    println!("Starting log ingestor with config: \n {:?}", &config);
+    println!("INFO: Starting log ingestor with config: \n {:?}", &config);
 
     let metrics = if config.enable_metrics {
-        println!("Starting metrics task...");
+        println!("DEBUG: Starting metrics task...");
         tokio::spawn(metrics_loop(config))
     } else {
         tokio::spawn(futures::future::ready(()))
     };
 
     if config.enable_logging {
-        println!("Starting log ingestor task...");
+        println!("DEBUG: Starting log ingestor task...");
         let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
         let producer = tokio::spawn(producer_loop(tx, config));
         consumer_loop(&mut rx, config).await;
@@ -84,6 +84,6 @@ async fn main() {
     let config = Box::leak(Box::new(assemble_config(config_paths())));
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
-        .expect("Failed to install rustls crypto provider");
+        .expect("ERROR: Failed to install rustls crypto provider");
     run_services(config).await
 }

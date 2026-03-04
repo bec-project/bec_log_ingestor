@@ -227,7 +227,9 @@ pub fn assemble_config(paths: (std::path::PathBuf, Option<std::path::PathBuf>)) 
             let intervals = MetricIntervalsConfig::from_file(intervals_reference_file.clone());
             config.metrics.intervals.extend(intervals.intervals);
         } else {
-            println!("Metric intervals config file not found at {intervals_reference_file:?}")
+            println!(
+                "ERROR: Metric intervals config file not found at {intervals_reference_file:?}"
+            )
         }
     }
     if let Some(intervals) = metrics_path.map(MetricIntervalsConfig::from_file) {

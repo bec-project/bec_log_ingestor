@@ -262,7 +262,7 @@ async fn watchdog_loop(
             break;
         }
         interval.tick().await;
-        println!("Watchdog checking {:?}", futs.lock().await.keys());
+        println!("DEBUG: Watchdog checking {:?}", futs.lock().await.keys());
         let finished: Vec<String> = {
             futs.lock()
                 .await
@@ -288,7 +288,7 @@ async fn watchdog_loop(
                 }
             }
         }
-        println!("Watchdog done.");
+        println!("DEBUG: Watchdog done.");
     }
 }
 
@@ -337,22 +337,22 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
         {
             Ok(res) => {
                 retries = 0;
-                println!("Sent {open} metrics to Mimir.");
+                println!("DEBUG: Sent {open} metrics to Mimir.");
                 if !res.status().is_success() {
                     let text = res
                         .text()
                         .await
                         .unwrap_or("[Unable to decode response text!]".into());
-                    println!("Received error response: {text} ");
+                    println!("ERROR: Received error response: {text} ");
                 }
             }
             Err(res) => {
                 println!("ERROR: {res:?}");
                 if retries == 3 {
-                    println!("Maximum retry attempts exceeded, exiting.");
+                    println!("ERROR: Maximum retry attempts exceeded, exiting.");
                     exit(0x45); // Service unavailable
                 }
-                println!("Retrying in 5s.");
+                println!("DEBUG: Retrying in 5s.");
                 sleep(Duration::from_secs(5)).await;
                 retries += 1;
             }
@@ -360,7 +360,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
         buffer.clear();
         proto_encoded_buffer.clear();
     }
-    println!("Producer dropped, consumer exiting");
+    println!("INFO: Producer dropped, consumer exiting");
 }
 
 /// Main routine to start the metrics service
