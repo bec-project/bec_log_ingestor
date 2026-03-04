@@ -89,13 +89,13 @@ pub async fn consumer_loop(
             .await
         {
             Ok(res) => {
-                println!("Sent {open} logs to loki.");
+                println!("DEBUG: Sent {open} logs to loki.");
                 if !res.status().is_success() {
                     let text = res
                         .text()
                         .await
                         .unwrap_or("[Unable to decode response text!]".into());
-                    println!("Received error response: {text} ");
+                    println!("ERROR: Received error response: {text} ");
                 }
             }
             Err(res) => {
@@ -104,7 +104,7 @@ pub async fn consumer_loop(
         };
         buffer.clear();
     }
-    println!("Producer dropped, consumer exiting");
+    println!("INFO: Producer dropped, consumer exiting");
 }
 
 #[cfg(test)]

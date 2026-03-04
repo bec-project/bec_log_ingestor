@@ -115,11 +115,11 @@ fn check_connection(
 ) -> Result<(), ()> {
     if let Ok(key_exists) = redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
         if !key_exists {
-            println!("Logging endpoint doesn't exist, exiting.");
+            println!("ERROR: Logging endpoint doesn't exist, exiting.");
             return Err(());
         }
     } else {
-        panic!("Something went wrong checking the logs endpoint")
+        panic!("ERROR: Something went wrong checking the logs endpoint")
     }
     setup_consumer_group(redis_conn, &config);
     Ok(())
@@ -128,7 +128,7 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static I
     let mut redis_conn =
         create_redis_conn(&config.redis.url.full_url()).expect("Could not connect to Redis!");
     if check_connection(&mut redis_conn, &config).is_err() {
-        println!("");
+        println!("ERROR: could not correctly set up redis connection");
         return;
     }
 
@@ -146,7 +146,7 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static I
 
                 for record in records {
                     if tx.send(record).is_err() {
-                        println!("Receiver dropped, stopping...");
+                        println!("INFO: Receiver dropped, stopping...");
                         break 'main;
                     }
                 }
@@ -157,10 +157,10 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static I
                 {
                     let new_conn = create_redis_conn(&config.redis.url.full_url());
                     if new_conn.is_err() {
-                        println!("Error reading from redis, retrying connection in 1s");
+                        println!("ERROR: Error reading from redis, retrying connection in 1s");
                         thread::sleep(Duration::from_millis(1000));
                     } else {
-                        println!("Reconnected");
+                        println!("INFO: Reconnected to redis");
                         let mut conn = new_conn.unwrap();
                         if check_connection(&mut conn, &config).is_err() {
                             return;
