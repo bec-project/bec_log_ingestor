@@ -14,14 +14,14 @@ fn main() -> Result<()> {
             println!("Auto-fetching of protoc is only intended for use in CI, install it manually.")
         } else {
             let res = Command::new("sudo").arg("apt-get").arg("update").output();
-            dbg!(&res);
+            println!("{:?}", &res);
             if res.is_err() {};
             let res = Command::new("sudo")
                 .arg("apt-get")
                 .arg("install")
                 .arg("protobuf-compiler")
                 .output();
-            dbg!(&res);
+            println!("{:?}", &res);
             if res.is_err() {};
         }
     };
