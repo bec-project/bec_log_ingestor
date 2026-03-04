@@ -1,3 +1,11 @@
+## [1.11.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.11.0...v1.11.1) (2026-03-04)
+
+
+### Bug Fixes
+
+* label all log lines with level ([d231b87](https://github.com/bec-project/bec_log_ingestor/commit/d231b8738c770ef88c871102d24c259c8c6bcfe8))
+* reduce log verbosity ([6ad98d2](https://github.com/bec-project/bec_log_ingestor/commit/6ad98d27054bfacb5c5cae14be192252790f5864))
+
 # [1.11.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.10.1...v1.11.0) (2026-03-03)
 
 
