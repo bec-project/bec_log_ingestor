@@ -58,9 +58,9 @@ fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_jso
         })
         .collect();
 
-    dbg!(serde_json::json!({
+    serde_json::json!({
         "streams": streams
-    }))
+    })
 }
 
 pub async fn consumer_loop(
