@@ -125,9 +125,13 @@ async fn test_loki_malformed() {
     let producer = tokio::spawn(producer_loop(tx, config, 1, 10));
     let consumer = tokio::spawn(consumer_loop(rxbox, config));
 
-    // Always wait for the whole timeout, not very good, but checking the mock is not supported
-    // See https://github.com/lipanski/mockito/issues/227
-    sleep(Duration::from_millis(3000)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !mock.matched_async().await {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
 
     consumer.abort();
     producer.abort();
@@ -143,7 +147,7 @@ async fn test_loki_happy_path() {
     let mock = server.mock("POST", "/").match_body("{\"streams\":[{\"stream\":{\"hostname\":\"sparkle\",\"label\":\"bec_logs\",\"level\":\"INFO\",\"service_name\":\"FileWriterManager\"},\"values\":[[\"1773154393820179968\",\"Waiting for DeviceServer.\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\",\"file_name\":\"bec_service.py\",\"function\":\"wait_for_service\",\"line\":\"434\",\"module\":\"bec_service\",\"proc_id\":\"222077\"}]]}]}").create();
 
     let (redis_container, redis_url, redis_port) =
-        tokio::time::timeout(Duration::from_secs(15), async { create_redis().await })
+        tokio::time::timeout(Duration::from_secs(10), async { create_redis().await })
             .await
             .unwrap();
     let _ = redis_container.start().await;
@@ -159,9 +163,13 @@ async fn test_loki_happy_path() {
     let producer = tokio::spawn(producer_loop(tx, config, 1, 10));
     let consumer = tokio::spawn(consumer_loop(rxbox, config));
 
-    // Always wait for the whole timeout, not very good, but checking the mock is not supported
-    // See https://github.com/lipanski/mockito/issues/227
-    sleep(Duration::from_millis(3000)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !mock.matched_async().await {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
 
     consumer.abort();
     producer.abort();
