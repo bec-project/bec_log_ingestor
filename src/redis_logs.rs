@@ -2,12 +2,13 @@ use crate::config::IngestorConfig;
 use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
 use rmp_serde;
-use std::{error::Error, thread, time::Duration};
+use std::{thread, time::Duration};
 use tokio::sync::mpsc;
 
 const LOGGING_ENDPOINT: [&str; 1] = ["info/log"];
 const KEY_MISMATCH: &str = "We got a response for request with one key, there must be one key!";
 const NO_DATA: &str = "Uh oh, log message contained no data";
+const BAD_DATA: &str = "Log message data not binary-data or could not be decoded!";
 const MAX_RETRIES: u8 = 10;
 
 #[derive(thiserror::Error, Debug)]
@@ -18,16 +19,11 @@ pub enum RedisError {
     Fatal(String),
 }
 
-fn str_error(err: &str) -> Box<dyn Error> {
-    Box::<dyn Error>::from(err)
-}
-fn retryable_detail_or_unknown(e: redis::RedisError) -> RedisError {
+fn retryable_detail(e: redis::RedisError) -> RedisError {
     RedisError::Retryable(e.detail().unwrap_or("unknown").into())
 }
-
-pub fn create_redis_conn(url: String) -> Result<redis::Connection, RedisError> {
-    let client = redis::Client::open(url).map_err(retryable_detail_or_unknown)?;
-    client.get_connection().map_err(retryable_detail_or_unknown)
+fn fatal_detail(e: redis::RedisError) -> RedisError {
+    RedisError::Fatal(e.detail().unwrap_or("unknown").into())
 }
 
 pub fn create_redis_conn_with_retry(
@@ -38,7 +34,10 @@ pub fn create_redis_conn_with_retry(
         if retries >= MAX_RETRIES {
             return Err(RedisError::Fatal("Max retries exceeded".into()));
         };
-        let new_conn = create_redis_conn(config.redis.url.full_url());
+        let new_conn = redis::Client::open(config.redis.url.full_url())
+            .map_err(retryable_detail)?
+            .get_connection()
+            .map_err(retryable_detail);
         if new_conn.is_err() {
             println!("ERROR: Error reading from redis, retrying connection in 1s");
             thread::sleep(Duration::from_millis(1000));
@@ -65,9 +64,10 @@ fn read_logs(
     redis_conn: &mut redis::Connection,
     last_id: &String,
     config: &'static IngestorConfig,
-) -> Result<(Option<String>, Vec<redis::Value>), Box<dyn Error>> {
-    let raw_reply: redis::streams::StreamReadReply =
-        redis_conn.xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))?;
+) -> Result<(Option<String>, Vec<redis::Value>), RedisError> {
+    let raw_reply: redis::streams::StreamReadReply = redis_conn
+        .xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))
+        .map_err(retryable_detail)?;
 
     if raw_reply.keys.is_empty() {
         return Ok((Some(last_id.to_owned()), vec![]));
@@ -76,31 +76,37 @@ fn read_logs(
     let log_key = raw_reply
         .keys
         .first()
-        .ok_or_else(|| str_error(KEY_MISMATCH))?;
+        .ok_or_else(|| RedisError::Retryable(KEY_MISMATCH.into()))?;
 
     let last_id = log_key.ids.last().map(|i| i.id.clone());
     let logs = log_key
         .ids
         .iter()
-        .map(|e| e.map.get("data").ok_or_else(|| str_error(NO_DATA)).cloned())
-        .collect::<Result<Vec<redis::Value>, Box<dyn Error>>>()?;
+        .map(|e| {
+            e.map
+                .get("data")
+                .ok_or_else(|| RedisError::Retryable(NO_DATA.into()))
+                .cloned()
+        })
+        .collect::<Result<Vec<redis::Value>, RedisError>>()?;
 
     Ok((last_id, logs))
 }
 
-fn process_data(values: Vec<redis::Value>) -> Result<Vec<LogMessagePack>, Box<dyn Error>> {
+fn process_data(values: Vec<redis::Value>) -> Result<Vec<LogMessagePack>, RedisError> {
     let un_valued: Vec<Vec<u8>> = values
         .iter()
         .map(|e| match e {
             redis::Value::BulkString(x) => Ok(x.to_vec()),
-            _ => Err(str_error("Log message data not binary-data!")),
+            _ => Err(RedisError::Retryable(BAD_DATA.into())),
         })
-        .collect::<Result<Vec<Vec<u8>>, Box<dyn Error>>>()?;
+        .collect::<Result<Vec<Vec<u8>>, RedisError>>()?;
 
     Ok(un_valued
         .iter()
         .map(|e| rmp_serde::from_slice::<LogMessagePack>(e))
-        .collect::<Result<Vec<LogMessagePack>, rmp_serde::decode::Error>>()?)
+        .collect::<Result<Vec<LogMessagePack>, rmp_serde::decode::Error>>()
+        .map_err(|_| RedisError::Retryable(BAD_DATA.into()))?)
 }
 
 fn extract_records(messages: Vec<LogMessagePack>) -> Vec<LogMsg> {
@@ -152,18 +158,14 @@ fn check_connection(
     redis_conn: &mut redis::Connection,
     config: &'static IngestorConfig,
 ) -> Result<(), RedisError> {
-    match redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
-        Ok(key_exists) => {
-            if !key_exists {
-                return Err(RedisError::Retryable("No logging endpoint found".into()));
-            }
-        }
-        Err(e) => {
-            return Err(RedisError::Fatal(e.detail().unwrap_or("unknown").into()));
-        }
+    let key_exists = redis_conn
+        .exists::<&str, bool>(&LOGGING_ENDPOINT[0])
+        .map_err(fatal_detail)?;
+    if !key_exists {
+        Err(RedisError::Retryable("No logging endpoint found".into()))
+    } else {
+        setup_consumer_group(redis_conn, &config)
     }
-    setup_consumer_group(redis_conn, &config)?;
-    Ok(())
 }
 
 pub async fn producer_loop(
