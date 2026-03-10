@@ -8,14 +8,48 @@ use tokio::sync::mpsc;
 const LOGGING_ENDPOINT: [&str; 1] = ["info/log"];
 const KEY_MISMATCH: &str = "We got a response for request with one key, there must be one key!";
 const NO_DATA: &str = "Uh oh, log message contained no data";
+const MAX_RETRIES: u8 = 10;
+
+#[derive(thiserror::Error, Debug)]
+pub enum RedisError {
+    #[error("Temporary error: {0}")]
+    Retryable(String),
+    #[error("Fatal error: {0}")]
+    Fatal(String),
+}
 
 fn str_error(err: &str) -> Box<dyn Error> {
     Box::<dyn Error>::from(err)
 }
+fn retryable_detail_or_unknown(e: redis::RedisError) -> RedisError {
+    RedisError::Retryable(e.detail().unwrap_or("unknown").into())
+}
 
-pub fn create_redis_conn(url: &str) -> Result<redis::Connection, redis::RedisError> {
-    let client = redis::Client::open(url)?;
-    client.get_connection()
+pub fn create_redis_conn(url: String) -> Result<redis::Connection, RedisError> {
+    let client = redis::Client::open(url).map_err(retryable_detail_or_unknown)?;
+    client.get_connection().map_err(retryable_detail_or_unknown)
+}
+
+pub fn create_redis_conn_with_retry(
+    config: &'static IngestorConfig,
+) -> Result<redis::Connection, RedisError> {
+    let mut retries: u8 = 0;
+    loop {
+        if retries >= MAX_RETRIES {
+            return Err(RedisError::Fatal("Max retries exceeded".into()));
+        };
+        let new_conn = create_redis_conn(config.redis.url.full_url());
+        if new_conn.is_err() {
+            println!("ERROR: Error reading from redis, retrying connection in 1s");
+            thread::sleep(Duration::from_millis(1000));
+        } else {
+            println!("INFO: Reconnected to redis");
+            let mut conn = new_conn.unwrap();
+            check_connection(&mut conn, &config)?;
+            return Ok(conn);
+        }
+        retries += 1;
+    }
 }
 
 fn stream_read_opts(config: &'static IngestorConfig) -> redis::streams::StreamReadOptions {
@@ -76,10 +110,11 @@ fn extract_records(messages: Vec<LogMessagePack>) -> Vec<LogMsg> {
         .collect()
 }
 
-fn setup_consumer_group(conn: &mut redis::Connection, config: &'static IngestorConfig) {
-    let group: Result<(), redis::RedisError> =
-        conn.xgroup_create(&LOGGING_ENDPOINT, &config.redis.consumer_group, "0");
-    match group {
+fn setup_consumer_group(
+    conn: &mut redis::Connection,
+    config: &'static IngestorConfig,
+) -> Result<(), RedisError> {
+    match conn.xgroup_create::<_, _, _, ()>(&LOGGING_ENDPOINT, &config.redis.consumer_group, "0") {
         Ok(_) => (),
         Err(error) => {
             if let Some(code) = error.code()
@@ -98,39 +133,44 @@ fn setup_consumer_group(conn: &mut redis::Connection, config: &'static IngestorC
             }
         }
     }
-    let create_id: Result<(), redis::RedisError> = conn.xgroup_createconsumer(
+    conn.xgroup_createconsumer::<_, _, _, ()>(
         &LOGGING_ENDPOINT,
         &config.redis.consumer_group,
         &config.redis.consumer_id,
-    );
-    create_id.expect(&format!(
-        "Failed to create Redis consumer ID {} in group {}!",
-        &config.redis.consumer_id, &config.redis.consumer_group
-    ));
+    )
+    .map_err(|e| {
+        RedisError::Fatal(format!(
+            "Failed to create Redis consumer ID {} in group {}: {:?}",
+            &config.redis.consumer_id,
+            &config.redis.consumer_group,
+            e.detail()
+        ))
+    })
 }
 
 fn check_connection(
     redis_conn: &mut redis::Connection,
     config: &'static IngestorConfig,
-) -> Result<(), ()> {
-    if let Ok(key_exists) = redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
-        if !key_exists {
-            println!("ERROR: Logging endpoint doesn't exist, exiting.");
-            return Err(());
+) -> Result<(), RedisError> {
+    match redis_conn.exists::<&str, bool>(&LOGGING_ENDPOINT[0]) {
+        Ok(key_exists) => {
+            if !key_exists {
+                return Err(RedisError::Retryable("No logging endpoint found".into()));
+            }
         }
-    } else {
-        panic!("ERROR: Something went wrong checking the logs endpoint")
+        Err(e) => {
+            return Err(RedisError::Fatal(e.detail().unwrap_or("unknown").into()));
+        }
     }
-    setup_consumer_group(redis_conn, &config);
+    setup_consumer_group(redis_conn, &config)?;
     Ok(())
 }
-pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static IngestorConfig) {
-    let mut redis_conn =
-        create_redis_conn(&config.redis.url.full_url()).expect("Could not connect to Redis!");
-    if check_connection(&mut redis_conn, &config).is_err() {
-        println!("ERROR: could not correctly set up redis connection");
-        return;
-    }
+
+pub async fn producer_loop(
+    tx: mpsc::UnboundedSender<LogMsg>,
+    config: &'static IngestorConfig,
+) -> Result<(), RedisError> {
+    let mut redis_conn = create_redis_conn_with_retry(&config)?;
 
     let stream_read_id: String = ">".into();
 
@@ -147,28 +187,13 @@ pub async fn producer_loop(tx: mpsc::UnboundedSender<LogMsg>, config: &'static I
                 for record in records {
                     if tx.send(record).is_err() {
                         println!("INFO: Receiver dropped, stopping...");
-                        break 'main;
+                        break 'main Ok(());
                     }
                 }
             }
         } else {
             println!("{:?}", raw_read);
-            redis_conn = loop {
-                {
-                    let new_conn = create_redis_conn(&config.redis.url.full_url());
-                    if new_conn.is_err() {
-                        println!("ERROR: Error reading from redis, retrying connection in 1s");
-                        thread::sleep(Duration::from_millis(1000));
-                    } else {
-                        println!("INFO: Reconnected to redis");
-                        let mut conn = new_conn.unwrap();
-                        if check_connection(&mut conn, &config).is_err() {
-                            return;
-                        }
-                        break conn;
-                    }
-                }
-            }
+            redis_conn = create_redis_conn_with_retry(&config)?;
         }
     }
 }
