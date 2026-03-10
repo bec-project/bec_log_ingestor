@@ -132,12 +132,14 @@ async fn test_loki_malformed() {
     })
     .await
     .unwrap();
+    let _ = redis_container.stop_with_timeout(Some(0)).await;
 
     consumer.abort();
     producer.abort();
+    let _ = consumer.await;
+    let _ = producer.await;
 
     mock.assert();
-    let _ = redis_container.stop_with_timeout(Some(0)).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -170,10 +172,12 @@ async fn test_loki_happy_path() {
     })
     .await
     .unwrap();
+    let _ = redis_container.stop_with_timeout(Some(0)).await;
 
     consumer.abort();
     producer.abort();
+    let _ = consumer.await;
+    let _ = producer.await;
 
     mock.assert();
-    let _ = redis_container.stop_with_timeout(Some(0)).await;
 }
