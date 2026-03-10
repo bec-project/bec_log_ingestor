@@ -9,9 +9,8 @@ const LOGGING_ENDPOINT: [&str; 1] = ["info/log"];
 const KEY_MISMATCH: &str = "We got a response for request with one key, there must be one key!";
 const NO_DATA: &str = "Uh oh, log message contained no data";
 const BAD_DATA: &str = "Log message data not binary-data or could not be decoded!";
-const MAX_RETRIES: u8 = 10;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum RedisError {
     #[error("Temporary error: {0}")]
     Retryable(String),
@@ -19,28 +18,31 @@ pub enum RedisError {
     Fatal(String),
 }
 
-fn retryable_detail(e: redis::RedisError) -> RedisError {
-    RedisError::Retryable(e.detail().unwrap_or("unknown").into())
+fn retryable_code(e: redis::RedisError) -> RedisError {
+    RedisError::Retryable(format!("Code: {}", e.code().unwrap_or("unknown")))
 }
-fn fatal_detail(e: redis::RedisError) -> RedisError {
-    RedisError::Fatal(e.detail().unwrap_or("unknown").into())
+fn fatal_code(e: redis::RedisError) -> RedisError {
+    RedisError::Fatal(format!("Code: {}", e.code().unwrap_or("unknown")))
 }
 
 pub fn create_redis_conn_with_retry(
     config: &'static IngestorConfig,
+    max_retries: u8,
+    initial_sleep: u64,
 ) -> Result<redis::Connection, RedisError> {
     let mut retries: u8 = 0;
     loop {
-        if retries >= MAX_RETRIES {
+        let sleep_time = initial_sleep * (2_i32.pow(retries.into()) as u64);
+        if retries >= max_retries {
             return Err(RedisError::Fatal("Max retries exceeded".into()));
         };
         let new_conn = redis::Client::open(config.redis.url.full_url())
-            .map_err(retryable_detail)?
+            .map_err(retryable_code)?
             .get_connection()
-            .map_err(retryable_detail);
+            .map_err(retryable_code);
         if new_conn.is_err() {
-            println!("ERROR: Error reading from redis, retrying connection in 1s");
-            thread::sleep(Duration::from_millis(1000));
+            println!("ERROR: Error reading from redis, retrying connection in {sleep_time} ms");
+            thread::sleep(Duration::from_millis(sleep_time));
         } else {
             println!("INFO: Reconnected to redis");
             let mut conn = new_conn.unwrap();
@@ -67,7 +69,7 @@ fn read_logs(
 ) -> Result<(Option<String>, Vec<redis::Value>), RedisError> {
     let raw_reply: redis::streams::StreamReadReply = redis_conn
         .xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))
-        .map_err(retryable_detail)?;
+        .map_err(retryable_code)?;
 
     if raw_reply.keys.is_empty() {
         return Ok((Some(last_id.to_owned()), vec![]));
@@ -121,37 +123,24 @@ fn setup_consumer_group(
     config: &'static IngestorConfig,
 ) -> Result<(), RedisError> {
     match conn.xgroup_create::<_, _, _, ()>(&LOGGING_ENDPOINT, &config.redis.consumer_group, "0") {
-        Ok(_) => (),
+        Ok(_) => Ok(()),
         Err(error) => {
             if let Some(code) = error.code()
                 && code == "BUSYGROUP"
             {
-                println!(
+                Ok(println!(
                     "Group {} already exists, rejoining with ID {}",
                     &config.redis.consumer_group, &config.redis.consumer_id
-                )
+                ))
             } else {
-                panic!(
+                Err(RedisError::Fatal(format!(
                     "Failed to create Redis consumer group {}! Code: {:?}",
                     &config.redis.consumer_group,
                     &error.code()
-                );
+                )))
             }
         }
     }
-    conn.xgroup_createconsumer::<_, _, _, ()>(
-        &LOGGING_ENDPOINT,
-        &config.redis.consumer_group,
-        &config.redis.consumer_id,
-    )
-    .map_err(|e| {
-        RedisError::Fatal(format!(
-            "Failed to create Redis consumer ID {} in group {}: {:?}",
-            &config.redis.consumer_id,
-            &config.redis.consumer_group,
-            e.detail()
-        ))
-    })
 }
 
 fn check_connection(
@@ -160,7 +149,7 @@ fn check_connection(
 ) -> Result<(), RedisError> {
     let key_exists = redis_conn
         .exists::<&str, bool>(&LOGGING_ENDPOINT[0])
-        .map_err(fatal_detail)?;
+        .map_err(fatal_code)?;
     if !key_exists {
         Err(RedisError::Retryable("No logging endpoint found".into()))
     } else {
@@ -171,9 +160,10 @@ fn check_connection(
 pub async fn producer_loop(
     tx: mpsc::UnboundedSender<LogMsg>,
     config: &'static IngestorConfig,
+    max_retries: u8,
+    initial_sleep: u64,
 ) -> Result<(), RedisError> {
-    let mut redis_conn = create_redis_conn_with_retry(&config)?;
-
+    let mut redis_conn = create_redis_conn_with_retry(&config, max_retries, initial_sleep)?;
     let stream_read_id: String = ">".into();
 
     'main: loop {
@@ -185,7 +175,6 @@ pub async fn producer_loop(
                 }
                 let unpacked = process_data(packed).unwrap_or(vec![error_log_item()]);
                 let records = extract_records(unpacked);
-
                 for record in records {
                     if tx.send(record).is_err() {
                         println!("INFO: Receiver dropped, stopping...");
@@ -195,7 +184,7 @@ pub async fn producer_loop(
             }
         } else {
             println!("{:?}", raw_read);
-            redis_conn = create_redis_conn_with_retry(&config)?;
+            redis_conn = create_redis_conn_with_retry(&config, max_retries, initial_sleep)?;
         }
     }
 }

@@ -25,6 +25,8 @@ use crate::metrics::metrics_loop;
 mod tests;
 
 static STOP_METRICS: AtomicBool = AtomicBool::new(false);
+const MAX_RETRIES: u8 = 8;
+const INITIAL_SLEEP: u64 = 300;
 
 #[derive(clap::Parser, Debug)]
 struct Args {
@@ -69,7 +71,7 @@ async fn run_services(config: &'static IngestorConfig) {
     if config.enable_logging {
         println!("DEBUG: Starting log ingestor task...");
         let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
-        let producer = tokio::spawn(producer_loop(tx, config));
+        let producer = tokio::spawn(producer_loop(tx, config, MAX_RETRIES, INITIAL_SLEEP));
         consumer_loop(&mut rx, config).await;
         let _ = tokio::join!(producer);
     } else {
