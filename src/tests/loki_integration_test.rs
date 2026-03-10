@@ -1,14 +1,14 @@
-use std::{panic::catch_unwind, time::Duration};
+use std::time::Duration;
 
+use mockito::Mock;
 use redis::Commands;
 use testcontainers_modules::{
     redis::Redis,
     testcontainers::{ContainerAsync, runners::AsyncRunner},
 };
 use tokio::{
-    spawn,
-    sync::mpsc::{self, Receiver, UnboundedReceiver},
-    time::sleep,
+    sync::mpsc::{self, UnboundedReceiver},
+    task::JoinHandle,
 };
 
 use crate::{
@@ -22,10 +22,14 @@ use crate::{
 // see https://rust.testcontainers.org/features/configuration/
 
 async fn create_redis() -> (ContainerAsync<Redis>, String, u16) {
-    let r = Redis::default().start().await.unwrap();
-    let h: String = r.get_host().await.unwrap().to_string();
-    let p: u16 = r.get_host_port_ipv4(6379).await.unwrap();
-    (r, h, p)
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let r = Redis::default().start().await.unwrap();
+        let h: String = r.get_host().await.unwrap().to_string();
+        let p: u16 = r.get_host_port_ipv4(6379).await.unwrap();
+        (r, h, p)
+    })
+    .await
+    .unwrap()
 }
 
 fn config(redis_url: String, redis_port: u16, service_url: String) -> IngestorConfig {
@@ -99,85 +103,106 @@ async fn test_loki_no_endpoint() {
     .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_loki_malformed() {
-    let mut server = mockito::Server::new_async().await;
+async fn mock_server(body: String) -> (mockito::ServerGuard, mockito::Mock) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .match_body(body.as_str())
+            .create_async()
+            .await;
+        (server, mock)
+    })
+    .await
+    .unwrap()
+}
 
-    let mock = server
-        .mock("POST", "/")
-        .match_body("{\"streams\":[{\"stream\":{\"hostname\":\"sparkle\",\"label\":\"bec_logs\",\"level\":\"ERROR\",\"service_name\":\"\"},\"values\":[[\"0\",\"Error processing log messages from Redis!\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}]]}]}")
-        .create();
-
-    let (redis_container, redis_url, redis_port) =
-        tokio::time::timeout(Duration::from_secs(15), async { create_redis().await })
-            .await
-            .unwrap();
-    let _ = redis_container.start().await;
+async fn test_setup(
+    body: impl Into<String>,
+) -> (
+    ContainerAsync<Redis>,
+    mockito::ServerGuard,
+    mockito::Mock,
+    &'static mut IngestorConfig,
+) {
+    let (server, mock) = mock_server(body.into()).await;
+    let (redis_container, redis_url, redis_port) = create_redis().await;
     let config: &'static mut IngestorConfig =
         Box::leak(Box::new(config(redis_url, redis_port, server.url())));
+    dbg!("test setup done");
+    (redis_container, server, mock, config)
+}
+
+async fn channels_and_tasks(
+    config: &'static mut IngestorConfig,
+) -> (JoinHandle<Result<(), RedisError>>, JoinHandle<()>) {
+    let (tx, rx) = mpsc::unbounded_channel::<LogMsg>();
+    let rxbox: &'static mut UnboundedReceiver<_> = Box::leak(Box::new(rx));
+    let producer = tokio::spawn(producer_loop(tx, config, 1, 10));
+    let consumer = tokio::spawn(consumer_loop(rxbox, config));
+    (producer, consumer)
+}
+
+fn error_log_body() -> String {
+    format!(
+        "{{\"streams\":[{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"ERROR\",\"service_name\":\"\"}},\"values\":[[\"0\",\"Error processing log messages from Redis!\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}}]]}}]}}",
+        gethostname::gethostname().into_string().unwrap()
+    )
+}
+
+async fn check_with_timeout(mock: &Mock) -> Result<(), tokio::time::error::Elapsed> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !mock.matched_async().await {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+}
+
+async fn cleanup<T1, T2>(
+    redis: ContainerAsync<Redis>,
+    producer: JoinHandle<T1>,
+    consumer: JoinHandle<T2>,
+) {
+    let _ = redis.stop_with_timeout(Some(0)).await;
+    consumer.abort();
+    producer.abort();
+    let _ = consumer.await;
+    let _ = producer.await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_loki_malformed() {
+    let (redis_container, server, mock, config) = test_setup(error_log_body()).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
         .unwrap()
         .get_connection()
         .unwrap();
     let _: Result<String, _> = dbg!(conn.xadd("info/log", "*", &[("data", "test log")]));
-    let (tx, rx) = mpsc::unbounded_channel::<LogMsg>();
-    let rxbox: &'static mut UnboundedReceiver<_> = Box::leak(Box::new(rx));
-    let producer = tokio::spawn(producer_loop(tx, config, 1, 10));
-    let consumer = tokio::spawn(consumer_loop(rxbox, config));
-
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !mock.matched_async().await {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let _ = redis_container.stop_with_timeout(Some(0)).await;
-
-    consumer.abort();
-    producer.abort();
-    let _ = consumer.await;
-    let _ = producer.await;
-
-    mock.assert();
+    let (producer, consumer) = channels_and_tasks(config).await;
+    let test_result = check_with_timeout(&mock).await; // Save timeout result while we run cleanup
+    cleanup(redis_container, producer, consumer).await;
+    test_result.unwrap_or_else(|_| mock.assert()); // If we timed out, assert the mock to get the message of how it was called
 }
+
+fn log_body() -> String {
+    format!(
+        "{{\"streams\":[{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"INFO\",\"service_name\":\"FileWriterManager\"}},\"values\":[[\"1773154393820179968\",\"Waiting for DeviceServer.\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\",\"file_name\":\"bec_service.py\",\"function\":\"wait_for_service\",\"line\":\"434\",\"module\":\"bec_service\",\"proc_id\":\"222077\"}}]]}}]}}",
+        gethostname::gethostname().into_string().unwrap()
+    )
+}
+const ENCODED_LOG: &[u8; 663] = b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaBECMessage\xa9type_name\xaaLogMessage\xa4data\x83\xa8metadata\x80\xa8log_type\xa4info\xa7log_msg\x83\xa4text\xd9O2026-03-10 15:53:13 | bec_lib.bec_service | [INFO] | Waiting for DeviceServer.\n\xa6record\x8d\xa7elapsed\x82\xa4repr\xae0:00:00.025823\xa7seconds\xcb?\x9aqX1\xf0=\x14\xa9exception\xc0\xa5extra\x80\xa4file\x82\xa4name\xaebec_service.py\xa4path\xd9>/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\xa8function\xb0wait_for_service\xa5level\x83\xa4icon\xa6\xe2\x84\xb9\xef\xb8\x8f\xa4name\xa4INFO\xa2no\x14\xa4line\xcd\x01\xb2\xa7message\xb9Waiting for DeviceServer.\xa6module\xabbec_service\xa4name\xb3bec_lib.bec_service\xa7process\x82\xa2id\xce\x00\x03c}\xa4name\xabMainProcess\xa6thread\x82\xa2id\xcf\x00\x00\x7fSCq\xfb\x80\xa4name\xaaMainThread\xa4time\x82\xa4repr\xd9 2026-03-10 15:53:13.820180+01:00\xa9timestamp\xcbA\xdal\x0c\x16t}\xd4\xacservice_name\xb1FileWriterManager";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_loki_happy_path() {
-    let mut server = mockito::Server::new_async().await;
-
-    let mock = server.mock("POST", "/").match_body("{\"streams\":[{\"stream\":{\"hostname\":\"sparkle\",\"label\":\"bec_logs\",\"level\":\"INFO\",\"service_name\":\"FileWriterManager\"},\"values\":[[\"1773154393820179968\",\"Waiting for DeviceServer.\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\",\"file_name\":\"bec_service.py\",\"function\":\"wait_for_service\",\"line\":\"434\",\"module\":\"bec_service\",\"proc_id\":\"222077\"}]]}]}").create();
-
-    let (redis_container, redis_url, redis_port) =
-        tokio::time::timeout(Duration::from_secs(10), async { create_redis().await })
-            .await
-            .unwrap();
-    let _ = redis_container.start().await;
-    let config: &'static mut IngestorConfig =
-        Box::leak(Box::new(config(redis_url, redis_port, server.url())));
+    let (redis_container, server, mock, config) = test_setup(log_body()).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
         .unwrap()
         .get_connection()
         .unwrap();
-    let _: Result<String, _> = dbg!(conn.xadd("info/log", "*", &[("data", b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaBECMessage\xa9type_name\xaaLogMessage\xa4data\x83\xa8metadata\x80\xa8log_type\xa4info\xa7log_msg\x83\xa4text\xd9O2026-03-10 15:53:13 | bec_lib.bec_service | [INFO] | Waiting for DeviceServer.\n\xa6record\x8d\xa7elapsed\x82\xa4repr\xae0:00:00.025823\xa7seconds\xcb?\x9aqX1\xf0=\x14\xa9exception\xc0\xa5extra\x80\xa4file\x82\xa4name\xaebec_service.py\xa4path\xd9>/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\xa8function\xb0wait_for_service\xa5level\x83\xa4icon\xa6\xe2\x84\xb9\xef\xb8\x8f\xa4name\xa4INFO\xa2no\x14\xa4line\xcd\x01\xb2\xa7message\xb9Waiting for DeviceServer.\xa6module\xabbec_service\xa4name\xb3bec_lib.bec_service\xa7process\x82\xa2id\xce\x00\x03c}\xa4name\xabMainProcess\xa6thread\x82\xa2id\xcf\x00\x00\x7fSCq\xfb\x80\xa4name\xaaMainThread\xa4time\x82\xa4repr\xd9 2026-03-10 15:53:13.820180+01:00\xa9timestamp\xcbA\xdal\x0c\x16t}\xd4\xacservice_name\xb1FileWriterManager")]));
-    let (tx, rx) = mpsc::unbounded_channel::<LogMsg>();
-    let rxbox: &'static mut UnboundedReceiver<_> = Box::leak(Box::new(rx));
-    let producer = tokio::spawn(producer_loop(tx, config, 1, 10));
-    let consumer = tokio::spawn(consumer_loop(rxbox, config));
-
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !mock.matched_async().await {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let _ = redis_container.stop_with_timeout(Some(0)).await;
-
-    consumer.abort();
-    producer.abort();
-    let _ = consumer.await;
-    let _ = producer.await;
-
-    mock.assert();
+    let _: Result<String, _> = dbg!(conn.xadd("info/log", "*", &[("data", ENCODED_LOG)]));
+    let (producer, consumer) = channels_and_tasks(config).await;
+    let test_result = check_with_timeout(&mock).await; // Save timeout result while we run cleanup
+    cleanup(redis_container, producer, consumer).await;
+    test_result.unwrap_or_else(|_| mock.assert()); // If we timed out, assert the mock to get the message of how it was called
 }
