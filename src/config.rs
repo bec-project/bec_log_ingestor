@@ -75,7 +75,7 @@ pub struct RedisConfig {
 }
 
 fn default_push_interval() -> MetricInterval {
-    return MetricInterval::Secondly(3);
+    MetricInterval::Secondly(3)
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct LokiConfig {
@@ -105,9 +105,9 @@ pub struct MetricIntervalsConfig {
 }
 impl FromTomlFile for MetricIntervalsConfig {}
 
-impl Into<tokio::time::Interval> for &MetricInterval {
-    fn into(self) -> tokio::time::Interval {
-        match self {
+impl From<&MetricInterval> for tokio::time::Interval {
+    fn from(val: &MetricInterval) -> Self {
+        match val {
             MetricInterval::Millis(n) => tokio::time::interval(Duration::from_millis(*n)),
             MetricInterval::Secondly(n) => tokio::time::interval(Duration::from_secs(*n)),
             MetricInterval::Minutely(n) => tokio::time::interval(Duration::from_secs(n * 60)),

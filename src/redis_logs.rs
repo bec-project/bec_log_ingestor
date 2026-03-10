@@ -1,7 +1,6 @@
 use crate::config::IngestorConfig;
 use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
-use rmp_serde;
 use std::{thread, time::Duration};
 use tokio::sync::mpsc;
 
@@ -46,7 +45,7 @@ pub fn create_redis_conn_with_retry(
         } else {
             println!("INFO: Reconnected to redis");
             let mut conn = new_conn.unwrap();
-            check_connection(&mut conn, &config)?;
+            check_connection(&mut conn, config)?;
             return Ok(conn);
         }
         retries += 1;
@@ -104,11 +103,11 @@ fn process_data(values: Vec<redis::Value>) -> Result<Vec<LogMessagePack>, RedisE
         })
         .collect::<Result<Vec<Vec<u8>>, RedisError>>()?;
 
-    Ok(un_valued
+    un_valued
         .iter()
         .map(|e| rmp_serde::from_slice::<LogMessagePack>(e))
         .collect::<Result<Vec<LogMessagePack>, rmp_serde::decode::Error>>()
-        .map_err(|_| RedisError::Retryable(BAD_DATA.into()))?)
+        .map_err(|_| RedisError::Retryable(BAD_DATA.into()))
 }
 
 fn extract_records(messages: Vec<LogMessagePack>) -> Vec<LogMsg> {
@@ -148,12 +147,12 @@ fn check_connection(
     config: &'static IngestorConfig,
 ) -> Result<(), RedisError> {
     let key_exists = redis_conn
-        .exists::<&str, bool>(&LOGGING_ENDPOINT[0])
+        .exists::<&str, bool>(LOGGING_ENDPOINT[0])
         .map_err(fatal_code)?;
     if !key_exists {
         Err(RedisError::Retryable("No logging endpoint found".into()))
     } else {
-        setup_consumer_group(redis_conn, &config)
+        setup_consumer_group(redis_conn, config)
     }
 }
 
@@ -163,11 +162,11 @@ pub async fn producer_loop(
     max_retries: u8,
     initial_sleep: u64,
 ) -> Result<(), RedisError> {
-    let mut redis_conn = create_redis_conn_with_retry(&config, max_retries, initial_sleep)?;
+    let mut redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
     let stream_read_id: String = ">".into();
 
     'main: loop {
-        let raw_read = read_logs(&mut redis_conn, &stream_read_id, &config);
+        let raw_read = read_logs(&mut redis_conn, &stream_read_id, config);
         if let Ok(response) = raw_read {
             if let (Some(_), packed) = response {
                 if packed.is_empty() {
@@ -184,7 +183,7 @@ pub async fn producer_loop(
             }
         } else {
             println!("{:?}", raw_read);
-            redis_conn = create_redis_conn_with_retry(&config, max_retries, initial_sleep)?;
+            redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
         }
     }
 }

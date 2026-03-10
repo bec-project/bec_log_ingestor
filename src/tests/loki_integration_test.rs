@@ -109,7 +109,7 @@ async fn test_loki_malformed() {
         .create();
 
     let (redis_container, redis_url, redis_port) =
-        tokio::time::timeout(Duration::from_secs(5), async { create_redis().await })
+        tokio::time::timeout(Duration::from_secs(15), async { create_redis().await })
             .await
             .unwrap();
     let _ = redis_container.start().await;
@@ -143,7 +143,7 @@ async fn test_loki_happy_path() {
     let mock = server.mock("POST", "/").match_body("{\"streams\":[{\"stream\":{\"hostname\":\"sparkle\",\"label\":\"bec_logs\",\"level\":\"INFO\",\"service_name\":\"FileWriterManager\"},\"values\":[[\"1773154393820179968\",\"Waiting for DeviceServer.\",{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\",\"file_name\":\"bec_service.py\",\"function\":\"wait_for_service\",\"line\":\"434\",\"module\":\"bec_service\",\"proc_id\":\"222077\"}]]}]}").create();
 
     let (redis_container, redis_url, redis_port) =
-        tokio::time::timeout(Duration::from_secs(5), async { create_redis().await })
+        tokio::time::timeout(Duration::from_secs(15), async { create_redis().await })
             .await
             .unwrap();
     let _ = redis_container.start().await;
