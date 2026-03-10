@@ -178,7 +178,7 @@ pub(crate) fn metric_spawner(
             spawn(metric_future(
                 func.clone(),
                 labels.clone(),
-                config.metrics.interval_for_metric(&name, *default_interval),
+                config.metrics.interval_for_metric(name, *default_interval),
                 redis.clone(),
                 tx.clone(),
             )),
@@ -295,13 +295,13 @@ fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncR
         DynamicMetricDtype::Float => {
             let res = redis_value
                 .parse::<f64>()
-                .map_err(|e| parsing_error(&config, &redis_value, e.to_string()))?;
+                .map_err(|e| parsing_error(config, &redis_value, e.to_string()))?;
             Ok((numerical_sample_now(res), None))
         }
         DynamicMetricDtype::Int => {
             let res = redis_value
                 .parse::<i64>()
-                .map_err(|e| parsing_error(&config, &redis_value, e.to_string()))?;
+                .map_err(|e| parsing_error(config, &redis_value, e.to_string()))?;
             Ok((numerical_sample_now(res as f64), None))
         }
     }
@@ -322,7 +322,7 @@ fn dynamic_polling_metric<'a>(
             )))
         } else {
             let res_str =
-                str::from_utf8(&val).map_err(|e| parsing_error(&config, &val, e.to_string()))?;
+                str::from_utf8(&val).map_err(|e| parsing_error(config, &val, e.to_string()))?;
             parse_redis_value(config, res_str.into())
         }
     })
@@ -352,17 +352,16 @@ pub(crate) async fn dynamic_metric_future(
                 .on_message()
                 .map(|msg: Msg| {
                     let payload: String = msg.get_payload().expect("Failed to extract payload!");
-                    let (output, opt_extra_labels) =
-                        match parse_redis_value(&config, payload.into()) {
-                            Err(MetricError::Fatal(error_msg)) => {
-                                panic!("FATAL: {error_msg}")
-                            }
-                            Err(MetricError::Retryable(error_msg)) => {
-                                println!("WARNING: {error_msg}");
-                                return ();
-                            }
-                            Ok(res) => res,
-                        };
+                    let (output, opt_extra_labels) = match parse_redis_value(&config, payload) {
+                        Err(MetricError::Fatal(error_msg)) => {
+                            panic!("FATAL: {error_msg}")
+                        }
+                        Err(MetricError::Retryable(error_msg)) => {
+                            println!("WARNING: {error_msg}");
+                            return;
+                        }
+                        Ok(res) => res,
+                    };
                     let mut owned_labels = labels.clone();
                     if let Some(extra_labels) = opt_extra_labels {
                         owned_labels.extend(extra_labels);

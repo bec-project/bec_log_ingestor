@@ -40,7 +40,7 @@ fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_jso
     let mut map: BTreeMap<(String, String), Vec<serde_json::Value>> = BTreeMap::new();
 
     for (value, key_pair) in values {
-        map.entry(key_pair).or_insert_with(Vec::new).push(value);
+        map.entry(key_pair).or_default().push(value);
     }
 
     let streams: Vec<serde_json::Value> = map
