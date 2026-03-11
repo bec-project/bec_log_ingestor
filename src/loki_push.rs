@@ -80,22 +80,9 @@ pub async fn consumer_loop(
 
     loop {
         interval.tick().await;
-        let recv = tokio::time::timeout(interval.period(), async {
-            rx.recv_many(&mut buffer, config.loki.chunk_size.into())
-                .await
-        })
-        .await;
-
-        let open = match recv {
-            Ok(open) => open,
-            Err(_) => {
-                // Because of the interval timing, this shouldn't really come up in multithreaded environments
-                println!("DEBUG: No logs received, sleeping to prevent starvation.");
-                sleep(Duration::from_millis(10)).await;
-                continue;
-            }
-        };
-
+        let open = rx
+            .recv_many(&mut buffer, config.loki.chunk_size.into())
+            .await;
         println!("DEBUG: Received {open} logs from redis.");
         if open == 0 {
             break;
