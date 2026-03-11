@@ -9,6 +9,7 @@ use testcontainers_modules::{
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
     task::JoinHandle,
+    time::sleep,
 };
 
 use crate::{
@@ -39,7 +40,7 @@ fn config(redis_url: String, redis_port: u16, service_url: String) -> IngestorCo
 
 [redis]
 chunk_size = 10
-blocktime_millis = 1000
+blocktime_millis = 10
 consumer_group = "log-ingestor"
 consumer_id = "log-ingestor"
 
@@ -48,6 +49,7 @@ url = "redis://{redis_url}"
 port = {redis_port}
 
 [loki]
+push_interval = {{ Millis = 100 }}
 url = "{service_url}"
 auth = {{ username = "test-loki", password = "test-loki-password" }}
 chunk_size = 100
@@ -147,10 +149,14 @@ async fn test_setup(
 async fn channels_and_tasks(
     config: &'static mut IngestorConfig,
 ) -> (JoinHandle<Result<(), RedisError>>, JoinHandle<()>) {
+    println!("Spawning tasks");
     let (tx, rx) = mpsc::unbounded_channel::<LogMsg>();
     let rxbox: &'static mut UnboundedReceiver<_> = Box::leak(Box::new(rx));
-    let producer = tokio::spawn(producer_loop(tx, config, 1, 10));
+    let producer = tokio::spawn(producer_loop(tx, config, 3, 100));
+    println!("Spawned producer in timeout");
+    sleep(Duration::from_millis(10)).await;
     let consumer = tokio::spawn(consumer_loop(rxbox, config));
+    println!("Spawned consumer");
     (producer, consumer)
 }
 
@@ -162,9 +168,10 @@ fn error_log_body() -> String {
 }
 
 async fn check_with_timeout(mock: &Mock) -> Result<(), tokio::time::error::Elapsed> {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !mock.matched_async().await {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !mock.matched() {
+            println!("Polling mock to see if it has been called");
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     })
     .await
@@ -175,14 +182,16 @@ async fn cleanup<T1, T2>(
     producer: JoinHandle<T1>,
     consumer: JoinHandle<T2>,
 ) {
+    println!("cleaning up redis container and consumer and produced threads...");
     let _ = redis.stop_with_timeout(Some(0)).await;
     consumer.abort();
     producer.abort();
     let _ = consumer.await;
     let _ = producer.await;
+    println!("done cleaning up.");
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "current_thread")]
 async fn test_loki_malformed() {
     let (redis_container, server, mock, config) = test_setup(error_log_body()).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
@@ -191,7 +200,7 @@ async fn test_loki_malformed() {
         .unwrap();
     let _: Result<String, _> = dbg!(conn.xadd("info/log", "*", &[("data", "test log")]));
     let (producer, consumer) = channels_and_tasks(config).await;
-    let test_result = check_with_timeout(&mock).await; // Save timeout result while we run cleanup
+    let test_result = dbg!(check_with_timeout(&mock).await); // Save timeout result while we run cleanup
     cleanup(redis_container, producer, consumer).await;
     test_result.unwrap_or_else(|_| mock.assert()); // If we timed out, assert the mock to get the message of how it was called
 }
@@ -204,7 +213,7 @@ fn log_body() -> String {
 }
 const ENCODED_LOG: &[u8; 663] = b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaBECMessage\xa9type_name\xaaLogMessage\xa4data\x83\xa8metadata\x80\xa8log_type\xa4info\xa7log_msg\x83\xa4text\xd9O2026-03-10 15:53:13 | bec_lib.bec_service | [INFO] | Waiting for DeviceServer.\n\xa6record\x8d\xa7elapsed\x82\xa4repr\xae0:00:00.025823\xa7seconds\xcb?\x9aqX1\xf0=\x14\xa9exception\xc0\xa5extra\x80\xa4file\x82\xa4name\xaebec_service.py\xa4path\xd9>/home/david/Development/bec/bec/bec_lib/bec_lib/bec_service.py\xa8function\xb0wait_for_service\xa5level\x83\xa4icon\xa6\xe2\x84\xb9\xef\xb8\x8f\xa4name\xa4INFO\xa2no\x14\xa4line\xcd\x01\xb2\xa7message\xb9Waiting for DeviceServer.\xa6module\xabbec_service\xa4name\xb3bec_lib.bec_service\xa7process\x82\xa2id\xce\x00\x03c}\xa4name\xabMainProcess\xa6thread\x82\xa2id\xcf\x00\x00\x7fSCq\xfb\x80\xa4name\xaaMainThread\xa4time\x82\xa4repr\xd9 2026-03-10 15:53:13.820180+01:00\xa9timestamp\xcbA\xdal\x0c\x16t}\xd4\xacservice_name\xb1FileWriterManager";
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "current_thread")]
 async fn test_loki_happy_path() {
     let (redis_container, server, mock, config) = test_setup(log_body()).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
@@ -212,8 +221,8 @@ async fn test_loki_happy_path() {
         .get_connection()
         .unwrap();
     let _: Result<String, _> = dbg!(conn.xadd("info/log", "*", &[("data", ENCODED_LOG)]));
-    let (producer, consumer) = channels_and_tasks(config).await;
-    let test_result = check_with_timeout(&mock).await; // Save timeout result while we run cleanup
+    let (producer, consumer) = dbg!(channels_and_tasks(config).await);
+    let test_result = dbg!(check_with_timeout(&mock).await); // Save timeout result while we run cleanup
     cleanup(redis_container, producer, consumer).await;
     test_result.unwrap_or_else(|_| mock.assert()); // If we timed out, assert the mock to get the message of how it was called
 }

@@ -1,6 +1,9 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
-use tokio::{sync::mpsc, time::Interval};
+use tokio::{
+    sync::mpsc,
+    time::{Interval, sleep},
+};
 
 use crate::{
     config::{IngestorConfig, LokiConfig},
@@ -70,12 +73,30 @@ pub async fn consumer_loop(
     let mut buffer: Vec<LogMsg> = Vec::with_capacity(config.loki.chunk_size.into());
     let client = reqwest::Client::new();
     let mut interval: Interval = (&config.loki.push_interval).into();
+    println!(
+        "INFO: Starting Loki consumer loop, pushing at {:?}.",
+        &config.loki.push_interval
+    );
 
     loop {
         interval.tick().await;
-        let open = rx
-            .recv_many(&mut buffer, config.loki.chunk_size.into())
-            .await;
+        let recv = tokio::time::timeout(interval.period(), async {
+            rx.recv_many(&mut buffer, config.loki.chunk_size.into())
+                .await
+        })
+        .await;
+
+        let open = match recv {
+            Ok(open) => open,
+            Err(_) => {
+                // Because of the interval timing, this shouldn't really come up in multithreaded environments
+                println!("DEBUG: No logs received, sleeping to prevent starvation.");
+                sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+        };
+
+        println!("DEBUG: Received {open} logs from redis.");
         if open == 0 {
             break;
         }
@@ -89,7 +110,7 @@ pub async fn consumer_loop(
             .await
         {
             Ok(res) => {
-                println!("DEBUG: Sent {open} logs to loki.");
+                println!("DEBUG: Sent {open} logs to loki. Response: {res:?}");
                 if !res.status().is_success() {
                     let text = res
                         .text()
@@ -103,6 +124,7 @@ pub async fn consumer_loop(
             }
         };
         buffer.clear();
+        sleep(Duration::from_millis(10)).await;
     }
     println!("INFO: Producer dropped, consumer exiting");
 }
