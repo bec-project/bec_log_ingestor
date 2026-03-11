@@ -13,15 +13,18 @@ const BAD_DATA: &str = "Log message data not binary-data or could not be decoded
 pub enum RedisError {
     #[error("Temporary error: {0}")]
     Retryable(String),
-    #[error("Fatal error: {0}")]
-    Fatal(String),
+    #[error("Fatal error: {}. Context: {}", 0.0, 0.1)]
+    Fatal((String, Box<Option<RedisError>>)),
 }
 
 fn retryable_code(e: redis::RedisError) -> RedisError {
     RedisError::Retryable(format!("Code: {}", e.code().unwrap_or("unknown")))
 }
 fn fatal_code(e: redis::RedisError) -> RedisError {
-    RedisError::Fatal(format!("Code: {}", e.code().unwrap_or("unknown")))
+    RedisError::Fatal((
+        format!("Code: {}", e.code().unwrap_or("unknown")),
+        Box::new(None),
+    ))
 }
 
 pub fn create_redis_conn_with_retry(
@@ -30,26 +33,30 @@ pub fn create_redis_conn_with_retry(
     initial_sleep: u64,
 ) -> Result<redis::Connection, RedisError> {
     let mut retries: u8 = 0;
-    loop {
+    let mut last_error: Option<RedisError> = None;
+    while retries < max_retries {
         let sleep_time = initial_sleep * (2_i32.pow(retries.into()) as u64);
-        if retries >= max_retries {
-            return Err(RedisError::Fatal("Max retries exceeded".into()));
-        };
-        let new_conn = redis::Client::open(config.redis.url.full_url())
-            .map_err(retryable_code)?
-            .get_connection()
-            .map_err(retryable_code);
-        if new_conn.is_err() {
-            println!("ERROR: Error reading from redis, retrying connection in {sleep_time} ms");
-            thread::sleep(Duration::from_millis(sleep_time));
-        } else {
-            println!("INFO: Reconnected to redis");
-            let mut conn = new_conn.unwrap();
-            check_connection(&mut conn, config)?;
-            return Ok(conn);
+        match redis::Client::open(config.redis.url.full_url()) {
+            Ok(c) => match c.get_connection() {
+                Ok(mut c) => {
+                    println!("INFO: Reconnected to redis, checking logging keys and groups...");
+                    match check_connection(&mut c, config) {
+                        Ok(()) => return Ok(c),
+                        Err(e) => last_error = Some(e),
+                    }
+                }
+                Err(e) => last_error = Some(retryable_code(e)),
+            },
+            Err(e) => last_error = Some(retryable_code(e)),
         }
+        println!("ERROR: Error reading from redis, retrying connection in {sleep_time} ms");
+        thread::sleep(Duration::from_millis(sleep_time));
         retries += 1;
     }
+    Err(RedisError::Fatal((
+        "Max retries exceeded".into(),
+        Box::new(last_error),
+    )))
 }
 
 fn stream_read_opts(config: &'static IngestorConfig) -> redis::streams::StreamReadOptions {
@@ -127,15 +134,19 @@ fn setup_consumer_group(
             if let Some(code) = error.code()
                 && code == "BUSYGROUP"
             {
-                Ok(println!(
+                println!(
                     "Group {} already exists, rejoining with ID {}",
                     &config.redis.consumer_group, &config.redis.consumer_id
-                ))
+                );
+                Ok(())
             } else {
-                Err(RedisError::Fatal(format!(
-                    "Failed to create Redis consumer group {}! Code: {:?}",
-                    &config.redis.consumer_group,
-                    &error.code()
+                Err(RedisError::Fatal((
+                    format!(
+                        "Failed to create Redis consumer group {}! Code: {:?}",
+                        &config.redis.consumer_group,
+                        &error.code()
+                    ),
+                    Box::new(None),
                 )))
             }
         }

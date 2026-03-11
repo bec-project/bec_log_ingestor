@@ -75,7 +75,13 @@ async fn test_conn_no_redis() {
         let Err(result) = create_redis_conn_with_retry(config, 2, 10) else {
             panic!("shouldn't be able to connect")
         };
-        assert_eq!(result, RedisError::Retryable("Code: unknown".into()));
+        assert_eq!(
+            result,
+            RedisError::Fatal((
+                "Max retries exceeded".into(),
+                Box::new(Some(RedisError::Retryable("Code: unknown".into())))
+            ))
+        );
     })
     .await
     .unwrap()
@@ -94,7 +100,12 @@ async fn test_loki_no_endpoint() {
         let result = producer_loop(tx, config, 1, 10).await;
         assert_eq!(
             result,
-            Err(RedisError::Retryable("No logging endpoint found".into()))
+            Err(RedisError::Fatal((
+                "Max retries exceeded".into(),
+                Box::new(Some(RedisError::Retryable(
+                    "No logging endpoint found".into()
+                )))
+            )))
         );
 
         let _ = redis_container.stop_with_timeout(Some(0)).await;
