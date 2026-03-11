@@ -3,6 +3,7 @@ use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
 use std::{thread, time::Duration};
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 const LOGGING_ENDPOINT: [&str; 1] = ["info/log"];
 const KEY_MISMATCH: &str = "We got a response for request with one key, there must be one key!";
@@ -35,7 +36,6 @@ pub fn create_redis_conn_with_retry(
     let mut retries: u8 = 0;
     let mut last_error: Option<RedisError> = None;
     while retries < max_retries {
-        let sleep_time = initial_sleep * (2_i32.pow(retries.into()) as u64);
         match redis::Client::open(config.redis.url.full_url()) {
             Ok(c) => match c.get_connection() {
                 Ok(mut c) => {
@@ -49,7 +49,8 @@ pub fn create_redis_conn_with_retry(
             },
             Err(e) => last_error = Some(retryable_code(e)),
         }
-        println!("ERROR: Error reading from redis, retrying connection in {sleep_time} ms");
+        let sleep_time = initial_sleep * (2_i32.pow(retries.into()) as u64);
+        println!("ERROR: {last_error:?}, retrying connection in {sleep_time} ms");
         thread::sleep(Duration::from_millis(sleep_time));
         retries += 1;
     }
@@ -128,14 +129,18 @@ fn setup_consumer_group(
     conn: &mut redis::Connection,
     config: &'static IngestorConfig,
 ) -> Result<(), RedisError> {
+    println!("INFO: Setting up consumer group");
     match conn.xgroup_create::<_, _, _, ()>(&LOGGING_ENDPOINT, &config.redis.consumer_group, "0") {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            println!("INFO: Done setting up consumer group");
+            Ok(())
+        }
         Err(error) => {
             if let Some(code) = error.code()
                 && code == "BUSYGROUP"
             {
                 println!(
-                    "Group {} already exists, rejoining with ID {}",
+                    "INFO: Group {} already exists, rejoining with ID {}",
                     &config.redis.consumer_group, &config.redis.consumer_id
                 );
                 Ok(())
@@ -175,26 +180,30 @@ pub async fn producer_loop(
 ) -> Result<(), RedisError> {
     let mut redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
     let stream_read_id: String = ">".into();
-
+    println!("DEBUG: Starting Loki task producer loop");
     'main: loop {
-        let raw_read = read_logs(&mut redis_conn, &stream_read_id, config);
-        if let Ok(response) = raw_read {
-            if let (Some(_), packed) = response {
-                if packed.is_empty() {
-                    continue;
-                }
-                let unpacked = process_data(packed).unwrap_or(vec![error_log_item()]);
-                let records = extract_records(unpacked);
-                for record in records {
-                    if tx.send(record).is_err() {
-                        println!("INFO: Receiver dropped, stopping...");
-                        break 'main Ok(());
+        // Sleep between blocking calls prevents starvation of other tasks in thread limited environments
+        sleep(Duration::from_millis(10)).await;
+        match read_logs(&mut redis_conn, &stream_read_id, config) {
+            Ok(response) => {
+                if let (Some(_), packed) = response {
+                    if packed.is_empty() {
+                        continue;
+                    }
+                    for record in
+                        extract_records(process_data(packed).unwrap_or(vec![error_log_item()]))
+                    {
+                        if tx.send(record).is_err() {
+                            println!("INFO: Receiver dropped, stopping...");
+                            break 'main Ok(());
+                        }
                     }
                 }
             }
-        } else {
-            println!("{:?}", raw_read);
-            redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
+            Err(e) => {
+                println!("ERROR: {:?}", e);
+                redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
+            }
         }
     }
 }

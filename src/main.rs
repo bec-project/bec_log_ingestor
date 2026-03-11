@@ -25,6 +25,7 @@ use crate::metrics::metrics_loop;
 mod tests;
 
 static STOP_METRICS: AtomicBool = AtomicBool::new(false);
+// Final maximum sleep time of ~80s after 256*0.3 s
 const MAX_RETRIES: u8 = 8;
 const INITIAL_SLEEP: u64 = 300;
 
