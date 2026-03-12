@@ -44,6 +44,7 @@ The `dtype` parameter represents how to parse the information obtained from Redi
 2. Run `cargo typify -B -a PartialEq -o [output_file] [input_file]` on the json schema
 3. Add pub mod `[new module name]` to `./src/models/mod.rs`
 4. Modify the generated model to account for the fact that each object layer is wrapped in a bec codec
+5. Add some deser tests (follow the other message types)
 5. Re-export frequently used types from `./src/models/mod.rs` with `pub use`
 
 
