@@ -1,12 +1,20 @@
-use std::time::Duration;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use redis::Commands;
 use testcontainers_modules::{
     redis::Redis,
     testcontainers::{ContainerAsync, runners::AsyncRunner},
 };
 use tokio::spawn;
 
-use crate::{config::IngestorConfig, metrics::metrics_loop};
+use crate::{
+    config::IngestorConfig,
+    metrics::{metric_definitions, metrics_loop},
+    metrics_core::{
+        MetricDefinition, PinMetricResultFut, SimpleMetricFunc, numerical_sample_now,
+        static_metric_def, sync_metric,
+    },
+};
 
 // To run these tests, either a docker or podman socket should exist at $DOCKER_HOST or the default docker socket
 // see https://rust.testcontainers.org/features/configuration/
@@ -18,9 +26,14 @@ async fn create_redis() -> (ContainerAsync<Redis>, String, u16) {
     (r, h, p)
 }
 
-fn config(redis_url: String, redis_port: u16, metrics_url: String) -> IngestorConfig {
+fn config(
+    redis_url: String,
+    redis_port: u16,
+    metrics_url: String,
+    additional: &str,
+) -> IngestorConfig {
     toml::from_str(
-        format!(
+        (format!(
             r#"enable_logging=false
 
 [redis]
@@ -46,8 +59,8 @@ watchdog_interval = {{ Secondly = 20 }}
 publish_interval = {{ Millis = 5 }}
 
 "#
-        )
-        .as_str(),
+        ) + additional)
+            .as_str(),
     )
     .unwrap()
 }
@@ -67,9 +80,9 @@ async fn test_system_metrics_propagated() {
         let (redis_container, redis_url, redis_port) = create_redis().await;
         let _ = redis_container.start().await;
         let config: &'static mut IngestorConfig =
-            Box::leak(Box::new(config(redis_url, redis_port, server.url())));
+            Box::leak(Box::new(config(redis_url, redis_port, server.url(), "")));
 
-        let handle = spawn(metrics_loop(config));
+        let handle = spawn(metrics_loop(config, metric_definitions(config)));
         while !mock.matched_async().await {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -80,4 +93,70 @@ async fn test_system_metrics_propagated() {
     })
     .await
     .unwrap()
+}
+
+fn dummy_metric(_: &mut ()) -> PinMetricResultFut<'_> {
+    sync_metric(Ok((numerical_sample_now(0.0), None)))
+}
+
+const ENCODED_METRIC: &[u8; 228] = b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaBECMessage\xa9type_name\xb4DynamicMetricMessage\xa4data\x83\xa8metadata\x80\xa7metrics\x81\xa1a\x81\xad__bec_codec__\x83\xacencoder_name\xa9BaseModel\xa9type_name\xb8_FloatDynamicMetricValue\xa4data\x82\xa5value\xcb@\x16\x00\x00\x00\x00\x00\x00\xa9type_name\xa5float\xa9timestamp\xcbA\xdal\xf1v\x86L\xcd";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dynamic_metrics() {
+    let mut server = mockito::Server::new_async().await;
+    // the first mock will be filled before the second starts receiving calls
+    let mock = server.mock("POST", "/").expect(1).create();
+    let mock2 = server.mock("POST", "/").expect(1).create();
+
+    let test = tokio::time::timeout(Duration::from_secs(10), async {
+        let (redis_container, redis_url, redis_port) = create_redis().await;
+        let _ = redis_container.start().await;
+        let config: &'static mut IngestorConfig = Box::leak(Box::new(config(
+            redis_url,
+            redis_port,
+            server.url(),
+            "
+[metrics.dynamic]
+dynamic_metric = { read_type = \"PubSub\", key = \"info/dynamic_metrics/test\" }
+",
+        )));
+        let mut metrics: HashMap<String, MetricDefinition> = HashMap::from([static_metric_def(
+            Arc::new(dummy_metric) as SimpleMetricFunc,
+            "dummy_metric",
+            (config, None, None),
+        )]);
+        metrics.extend(
+            config
+                .metrics
+                .dynamic
+                .iter()
+                .map(|(n, dm)| (n.to_owned(), MetricDefinition::Dynamic(dm.clone()))),
+        );
+
+        let handle = spawn(metrics_loop(config, std::sync::Arc::new(metrics)));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut conn = redis::Client::open(config.redis.url.full_url())
+            .unwrap()
+            .get_connection()
+            .unwrap();
+        // first mock receives the dummy metric, everything is running
+        while !mock.matched_async().await {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(!mock2.matched_async().await);
+        // publish to the dynamic metric
+        let _: Result<String, _> = dbg!(conn.publish("info/dynamic_metrics/test", ENCODED_METRIC));
+        // then receive a second call
+        while !mock2.matched_async().await {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        handle.abort();
+        let _ = redis_container.stop_with_timeout(Some(0)).await;
+        let _ = handle.await;
+    })
+    .await;
+
+    mock2.assert(); // check no more came after finishing
+
+    test.unwrap();
 }

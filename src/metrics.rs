@@ -189,7 +189,7 @@ fn ram_avail_bytes(system: &mut System) -> PinMetricResultFut<'_> {
 }
 
 /// Defines the list of all metrics to run
-fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
+pub fn metric_definitions(config: &'static IngestorConfig) -> MetricDefinitions {
     // set up the statically defined metrics first
     let mut metrics = HashMap::from([
         static_metric_def(
@@ -353,7 +353,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
 }
 
 /// Main routine to start the metrics service
-pub async fn metrics_loop(config: &'static IngestorConfig) {
+pub async fn metrics_loop(config: &'static IngestorConfig, metrics: MetricDefinitions) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TimeSeries>();
     let redis_url: String = config.redis.url.full_url();
     let client = redis::Client::open(redis_url.clone())
@@ -362,7 +362,6 @@ pub async fn metrics_loop(config: &'static IngestorConfig) {
         .get_multiplexed_async_connection()
         .await
         .expect("Failed to connect to redis!");
-    let metrics = metric_definitions(config);
     let spawner = metric_spawner(tx.clone(), config.clone(), redis.clone());
 
     let futs: MetricFutures = Arc::new(Mutex::new(metrics.iter().map(spawner).collect()));
