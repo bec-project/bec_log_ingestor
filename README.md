@@ -31,8 +31,8 @@ or polling key-value entries. For example:
 
 ```toml
 [metrics.dynamic]
-dynamic_metric = { read_type = { Poll = { Minutely = 15 } }, key = "/user/dynamicmetrics/1", dtype = "Float" }
-dynamic_pubsub_metric = { read_type = "PubSub", key = "/user/dynamicmetrics/2", dtype = "Float" }
+dynamic_metric = { read_type = { Poll = { Minutely = 15 } }, key = "/user/dynamicmetrics/1" }
+dynamic_pubsub_metric = { read_type = "PubSub", key = "/user/dynamicmetrics/2" }
 ```
 
 The `dtype` parameter represents how to parse the information obtained from Redis.
