@@ -8,7 +8,7 @@ use crate::{
         prometheus::{TimeSeries, WriteRequest},
         static_metric_def, sync_metric,
     },
-    status_message::StatusMessagePack,
+    models::{ServiceStatus, StatusMessagePack, status_message},
 };
 
 use prost::Message;
@@ -55,7 +55,7 @@ fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
         let mut extra_labels: MetricLabels = HashMap::from([]);
         let service_info = status_update.bec_codec.data.info;
         match service_info {
-            crate::status_message::Info::ServiceInfo(info) => {
+            status_message::Info::ServiceInfo(info) => {
                 let versions = info.bec_codec.data.versions.unwrap();
                 extra_labels.insert("bec_lib".into(), versions.bec_lib);
                 extra_labels.insert("bec_ipython_client".into(), versions.bec_ipython_client);
@@ -138,18 +138,10 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
                 labels.insert(
                     name.into(),
                     match update.bec_codec.data.status.bec_codec.data {
-                        crate::status_message::ServiceStatus::RUNNING => {
-                            (&ServiceStatusValue::Running).into()
-                        }
-                        crate::status_message::ServiceStatus::BUSY => {
-                            (&ServiceStatusValue::Busy).into()
-                        }
-                        crate::status_message::ServiceStatus::IDLE => {
-                            (&ServiceStatusValue::Idle).into()
-                        }
-                        crate::status_message::ServiceStatus::ERROR => {
-                            (&ServiceStatusValue::Error).into()
-                        }
+                        ServiceStatus::RUNNING => (&ServiceStatusValue::Running).into(),
+                        ServiceStatus::BUSY => (&ServiceStatusValue::Busy).into(),
+                        ServiceStatus::IDLE => (&ServiceStatusValue::Idle).into(),
+                        ServiceStatus::ERROR => (&ServiceStatusValue::Error).into(),
                     },
                 );
             } else {
