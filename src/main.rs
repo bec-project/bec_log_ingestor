@@ -6,8 +6,6 @@ use tokio::sync::mpsc;
 mod models;
 use crate::models::LogMsg;
 
-mod status_message;
-
 mod config;
 use crate::config::{IngestorConfig, assemble_config};
 

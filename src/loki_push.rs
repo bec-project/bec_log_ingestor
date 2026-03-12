@@ -136,18 +136,18 @@ mod tests {
                 service_name: "test_service".into(),
                 text: "...".into(),
                 record: LogRecord {
-                    elapsed: crate::models::Elapsed {
+                    elapsed: crate::models::log_message::Elapsed {
                         repr: "".into(),
                         seconds: 0.0,
                     },
                     exception: None,
                     extra: {}.into(),
-                    file: crate::models::File {
+                    file: crate::models::log_message::File {
                         name: "".into(),
                         path: "".into(),
                     },
                     function: "".into(),
-                    level: crate::models::LogLevel {
+                    level: crate::models::log_message::LogLevel {
                         icon: "".into(),
                         name: d.level,
                         no: 100,
@@ -156,15 +156,15 @@ mod tests {
                     message: d.msg,
                     module: "".into(),
                     name: "".into(),
-                    process: crate::models::NameId {
+                    process: crate::models::log_message::NameId {
                         name: "".into(),
                         id: 0,
                     },
-                    thread: crate::models::NameId {
+                    thread: crate::models::log_message::NameId {
                         name: "".into(),
                         id: 0,
                     },
-                    time: crate::models::Timestamp {
+                    time: crate::models::log_message::Timestamp {
                         repr: "".into(),
                         timestamp: 0.0,
                     },
