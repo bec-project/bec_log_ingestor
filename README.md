@@ -37,6 +37,16 @@ dynamic_pubsub_metric = { read_type = "PubSub", key = "/user/dynamicmetrics/2", 
 
 The `dtype` parameter represents how to parse the information obtained from Redis.
 
+### Adding a new message type
+
+0. have `typify` installed as a binary (`cargo install cargo-typify`)
+1. Get the json schema from the pydantic model, eg ```python >>> print(json.dumps(DynamicMetricMessage.model_json_schema(), indent=2))``` and save it to the models directory
+2. Run `cargo typify -B -a PartialEq -o [output_file] [input_file]` on the json schema
+3. Add pub mod `[new module name]` to `./src/models/mod.rs`
+4. Modify the generated model to account for the fact that each object layer is wrapped in a bec codec
+5. Re-export frequently used types from `./src/models/mod.rs` with `pub use`
+
+
 ### Deployment
 
 To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`. For SLS deployments this is managed in puppet already.
