@@ -17,7 +17,7 @@ use crate::loki_push::consumer_loop;
 
 mod metrics;
 mod metrics_core;
-use crate::metrics::metrics_loop;
+use crate::metrics::{metric_definitions, metrics_loop};
 
 #[cfg(test)]
 mod tests;
@@ -62,7 +62,7 @@ async fn run_services(config: &'static IngestorConfig) {
 
     let metrics = if config.enable_metrics {
         println!("DEBUG: Starting metrics task...");
-        tokio::spawn(metrics_loop(config))
+        tokio::spawn(metrics_loop(config, metric_definitions(config)))
     } else {
         tokio::spawn(futures::future::ready(()))
     };
