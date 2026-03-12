@@ -1,0 +1,126 @@
+{
+    "$defs": {
+        "_BoolDynamicMetricValue": {
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "boolean"
+                },
+                "type_name": {
+                    "const": "bool",
+                    "default": "bool",
+                    "title": "Type Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "value"
+            ],
+            "title": "_BoolDynamicMetricValue",
+            "type": "object"
+        },
+        "_FloatDynamicMetricValue": {
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "number"
+                },
+                "type_name": {
+                    "const": "float",
+                    "default": "float",
+                    "title": "Type Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "value"
+            ],
+            "title": "_FloatDynamicMetricValue",
+            "type": "object"
+        },
+        "_IntDynamicMetricValue": {
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "integer"
+                },
+                "type_name": {
+                    "const": "int",
+                    "default": "int",
+                    "title": "Type Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "value"
+            ],
+            "title": "_IntDynamicMetricValue",
+            "type": "object"
+        },
+        "_StrDynamicMetricValue": {
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string"
+                },
+                "type_name": {
+                    "const": "str",
+                    "default": "str",
+                    "title": "Type Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "value"
+            ],
+            "title": "_StrDynamicMetricValue",
+            "type": "object"
+        }
+    },
+    "description": "Message for propagating metrics to the log ingestor.\n\nArgs:\n    metrics (dict[str, str|int|float|bool]): Mapping of name to metric value",
+    "properties": {
+        "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+        },
+        "metrics": {
+            "additionalProperties": {
+                "discriminator": {
+                    "mapping": {
+                        "bool": "#/$defs/_BoolDynamicMetricValue",
+                        "float": "#/$defs/_FloatDynamicMetricValue",
+                        "int": "#/$defs/_IntDynamicMetricValue",
+                        "str": "#/$defs/_StrDynamicMetricValue"
+                    },
+                    "propertyName": "type_name"
+                },
+                "oneOf": [
+                    {
+                        "$ref": "#/$defs/_StrDynamicMetricValue"
+                    },
+                    {
+                        "$ref": "#/$defs/_IntDynamicMetricValue"
+                    },
+                    {
+                        "$ref": "#/$defs/_FloatDynamicMetricValue"
+                    },
+                    {
+                        "$ref": "#/$defs/_BoolDynamicMetricValue"
+                    }
+                ]
+            },
+            "title": "Metrics",
+            "type": "object"
+        },
+        "timestamp": {
+            "title": "Timestamp",
+            "type": "number"
+        }
+    },
+    "required": [
+        "metrics"
+    ],
+    "title": "DynamicMetricMessage",
+    "type": "object"
+}
