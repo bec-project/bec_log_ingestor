@@ -1,6 +1,9 @@
 use crate::{
     STOP_METRICS,
-    config::{DynamicMetric, DynamicMetricDtype, IngestorConfig, RedisConfig, RedisReadType},
+    config::{DynamicMetric, IngestorConfig, RedisConfig, RedisReadType},
+    models::dynamic_metric_message::{
+        DynamicMetricMessage, DynamicMetricMessageMetricsValue, DynamicMetricMessagePack,
+    },
 };
 
 use futures::StreamExt;
@@ -50,6 +53,33 @@ where
 pub(crate) enum MetricOutput {
     NumericalSample(Sample),
     SampleForMultiplexing((i64, Vec<String>, Vec<String>)),
+    MultipleSamples(Vec<(String, MetricOutput)>),
+}
+
+impl MetricOutput {
+    pub fn to_timeseries(&self, labels: HashMap<String, String>) -> Vec<TimeSeries> {
+        match self {
+            MetricOutput::NumericalSample(sample) => {
+                vec![TimeSeries {
+                    samples: vec![*sample],
+                    labels: labels_from_hashmap(&labels),
+                }]
+            }
+            MetricOutput::SampleForMultiplexing((sample, keys_to_multiplex, possible_values)) => {
+                multiplex_samples(
+                    *sample,
+                    labels,
+                    keys_to_multiplex.to_vec(),
+                    possible_values.to_vec(),
+                )
+            }
+            MetricOutput::MultipleSamples(samples) => samples
+                .iter()
+                .map(|(n, s)| s.to_timeseries(append_submetric_name(n, &labels)))
+                .flatten()
+                .collect(),
+        }
+    }
 }
 
 pub(crate) type MetricFuncResult<'a> =
@@ -145,6 +175,16 @@ pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
         })
         .collect()
 }
+pub(crate) fn append_submetric_name(submetric_name: &str, labels: &MetricLabels) -> MetricLabels {
+    let name = labels
+        .get("__name__")
+        .map(|n| n.clone())
+        .unwrap_or_default()
+        + submetric_name;
+    let mut labels = labels.clone();
+    labels.insert("__name__".into(), name);
+    labels
+}
 
 pub(crate) fn static_metric_def(
     func: impl Into<StaticMetricFunc>,
@@ -231,17 +271,7 @@ async fn polling_metric_loop<Args>(
         if let Some(extra_labels) = opt_extra_labels {
             owned_labels.extend(extra_labels);
         }
-        let tss: Vec<TimeSeries> = match output {
-            MetricOutput::NumericalSample(sample) => {
-                vec![TimeSeries {
-                    samples: vec![sample],
-                    labels: labels_from_hashmap(&owned_labels),
-                }]
-            }
-            MetricOutput::SampleForMultiplexing((sample, keys_to_multiplex, possible_values)) => {
-                multiplex_samples(sample, owned_labels, keys_to_multiplex, possible_values)
-            }
-        };
+        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels);
         for ts in tss {
             if tx.send(ts).is_err() {
                 println!("TASK-FATAL: error transmitting metric to publisher channel");
@@ -277,34 +307,61 @@ fn parsing_error<T: std::fmt::Debug>(
     detail: String,
 ) -> MetricError {
     MetricError::Retryable(format!(
-        "Could not parse dynamically defined metric at: {} as a {} value: {val:?}. Detail: {detail}",
-        config.key, config.dtype
+        "Could not parse dynamically defined metric at {}: {val:?}. Detail: {detail}",
+        config.key,
     ))
 }
 
-fn parse_redis_value(config: &DynamicMetric, redis_value: String) -> MetricFuncResult<'_> {
-    match config.dtype {
-        DynamicMetricDtype::String => Ok((
-            MetricOutput::SampleForMultiplexing((
-                chrono::Utc::now().timestamp_millis(),
-                vec![],
-                vec![],
-            )),
-            Some(HashMap::from([("value".into(), redis_value)])),
-        )),
-        DynamicMetricDtype::Float => {
-            let res = redis_value
-                .parse::<f64>()
-                .map_err(|e| parsing_error(config, &redis_value, e.to_string()))?;
-            Ok((numerical_sample_now(res), None))
+fn process_dynamic_message_value(val: &DynamicMetricMessageMetricsValue, ts: i64) -> MetricOutput {
+    match val {
+        DynamicMetricMessageMetricsValue::StrDynamicMetricValue(_) => {
+            println!("WARNING: received string format dynamic metric, ignoring");
+            MetricOutput::MultipleSamples(vec![])
         }
-        DynamicMetricDtype::Int => {
-            let res = redis_value
-                .parse::<i64>()
-                .map_err(|e| parsing_error(config, &redis_value, e.to_string()))?;
-            Ok((numerical_sample_now(res as f64), None))
+        DynamicMetricMessageMetricsValue::IntDynamicMetricValue(val) => {
+            MetricOutput::NumericalSample(Sample {
+                value: val.value as f64,
+                timestamp: ts,
+            })
+        }
+        DynamicMetricMessageMetricsValue::FloatDynamicMetricValue(val) => {
+            MetricOutput::NumericalSample(Sample {
+                value: val.value as f64,
+                timestamp: ts,
+            })
+        }
+        DynamicMetricMessageMetricsValue::BoolDynamicMetricValue(val) => {
+            MetricOutput::NumericalSample(Sample {
+                value: val.value as i8 as f64,
+                timestamp: ts,
+            })
         }
     }
+}
+
+fn process_dynamic_message<'a>(config: &'a DynamicMetric, raw_msg: &[u8]) -> MetricFuncResult<'a> {
+    let msg: DynamicMetricMessage = rmp_serde::from_slice::<DynamicMetricMessagePack>(raw_msg)
+        .map(|res| res.bec_codec.data)
+        .map_err(|e| parsing_error(config, raw_msg, e.to_string()))?;
+    Ok((
+        MetricOutput::MultipleSamples(
+            msg.metrics
+                .iter()
+                .map(|(name, val)| {
+                    (
+                        name.to_owned(),
+                        process_dynamic_message_value(
+                            &val.bec_codec.data,
+                            msg.timestamp
+                                .map(|t| t as i64)
+                                .unwrap_or(chrono::Utc::now().timestamp_millis()),
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        None,
+    ))
 }
 
 fn dynamic_polling_metric<'a>(
@@ -321,9 +378,7 @@ fn dynamic_polling_metric<'a>(
                 &config.key
             )))
         } else {
-            let res_str =
-                str::from_utf8(&val).map_err(|e| parsing_error(config, &val, e.to_string()))?;
-            parse_redis_value(config, res_str.into())
+            process_dynamic_message(&config, &val)
         }
     })
 }
@@ -351,40 +406,23 @@ pub(crate) async fn dynamic_metric_future(
             pubsub
                 .on_message()
                 .map(|msg: Msg| {
-                    let payload: String = msg.get_payload().expect("Failed to extract payload!");
-                    let (output, opt_extra_labels) = match parse_redis_value(&config, payload) {
-                        Err(MetricError::Fatal(error_msg)) => {
-                            panic!("FATAL: {error_msg}")
-                        }
-                        Err(MetricError::Retryable(error_msg)) => {
-                            println!("WARNING: {error_msg}");
-                            return;
-                        }
-                        Ok(res) => res,
-                    };
+                    let payload: Vec<u8> = msg.get_payload().expect("Failed to extract payload!");
+                    let (output, opt_extra_labels) =
+                        match process_dynamic_message(&config, &payload) {
+                            Err(MetricError::Fatal(error_msg)) => {
+                                panic!("FATAL: {error_msg}")
+                            }
+                            Err(MetricError::Retryable(error_msg)) => {
+                                println!("WARNING: {error_msg}");
+                                return;
+                            }
+                            Ok(res) => res,
+                        };
                     let mut owned_labels = labels.clone();
                     if let Some(extra_labels) = opt_extra_labels {
                         owned_labels.extend(extra_labels);
                     }
-                    let tss: Vec<TimeSeries> = match output {
-                        MetricOutput::NumericalSample(sample) => {
-                            vec![TimeSeries {
-                                samples: vec![sample],
-                                labels: labels_from_hashmap(&owned_labels),
-                            }]
-                        }
-                        MetricOutput::SampleForMultiplexing((
-                            sample,
-                            keys_to_multiplex,
-                            possible_values,
-                        )) => multiplex_samples(
-                            sample,
-                            owned_labels,
-                            keys_to_multiplex,
-                            possible_values,
-                        ),
-                    };
-                    for ts in tss {
+                    for ts in output.to_timeseries(owned_labels) {
                         if tx.send(ts).is_err() {
                             panic!("TASK-FATAL: error transmitting metric to publisher channel");
                         }
@@ -454,6 +492,7 @@ url = \"http://127.0.0.1\"
                 assert!(sample.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
             }
             MetricOutput::SampleForMultiplexing(_) => panic!(),
+            MetricOutput::MultipleSamples(_) => todo!(),
         }
     }
 
@@ -478,6 +517,7 @@ url = \"http://127.0.0.1\"
                 assert_eq!(sample.timestamp, 5678);
             }
             MetricOutput::SampleForMultiplexing(_) => panic!(),
+            MetricOutput::MultipleSamples(_) => panic!(),
         }
     }
 

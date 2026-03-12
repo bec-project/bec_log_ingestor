@@ -124,31 +124,10 @@ pub enum RedisReadType {
     Poll(MetricInterval),
 }
 
-#[derive(Clone, Deserialize, Debug, Serialize, PartialEq)]
-pub enum DynamicMetricDtype {
-    String,
-    Float,
-    Int,
-}
-impl std::fmt::Display for DynamicMetricDtype {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match &self {
-                DynamicMetricDtype::String => "String",
-                DynamicMetricDtype::Float => "Float",
-                DynamicMetricDtype::Int => "Integer",
-            }
-        )
-    }
-}
-
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq)]
 pub struct DynamicMetric {
     pub read_type: RedisReadType,
     pub key: String,
-    pub dtype: DynamicMetricDtype,
 }
 
 fn default_watchdog_interval() -> MetricInterval {
@@ -362,7 +341,6 @@ this is not toml
         assert_eq!(config.metrics.dynamic.len(), 2);
 
         let dynamic_metric = config.metrics.dynamic.get("dynamic_metric").unwrap();
-        assert_eq!(dynamic_metric.dtype, DynamicMetricDtype::Float);
         assert_eq!(
             dynamic_metric.read_type,
             RedisReadType::Poll(MetricInterval::Secondly(15))
@@ -370,7 +348,6 @@ this is not toml
         assert_eq!(dynamic_metric.key, "/user/dynamicmetrics/1");
 
         let dynamic_metric_2 = config.metrics.dynamic.get("dynamic_metric_2").unwrap();
-        assert_eq!(dynamic_metric_2.dtype, DynamicMetricDtype::String);
         assert_eq!(dynamic_metric_2.read_type, RedisReadType::PubSub);
         assert_eq!(dynamic_metric_2.key, "/user/dynamicmetrics/2");
     }
