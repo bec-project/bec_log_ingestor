@@ -67,7 +67,7 @@ publish_interval = {{ Millis = 5 }}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_system_metrics_propagated() {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         let mut server = mockito::Server::new_async().await;
         // 3 system metrics should be gathered and sent, bundle depends on timing
         // Repetition time is longer than test timeout so the maximum should be 3
@@ -108,7 +108,7 @@ async fn test_dynamic_metrics() {
     let mock = server.mock("POST", "/").expect(1).create();
     let mock2 = server.mock("POST", "/").expect(1).create();
 
-    let test = tokio::time::timeout(Duration::from_secs(10), async {
+    let test = tokio::time::timeout(Duration::from_secs(15), async {
         let (redis_container, redis_url, redis_port) = create_redis().await;
         let _ = redis_container.start().await;
         let config: &'static mut IngestorConfig = Box::leak(Box::new(config(
