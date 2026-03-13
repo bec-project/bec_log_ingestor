@@ -1,3 +1,20 @@
+# [1.12.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.11.1...v1.12.0) (2026-03-13)
+
+
+### Bug Fixes
+
+* add some more debug info and prevent starvation ([da77013](https://github.com/bec-project/bec_log_ingestor/commit/da770132cc1f43a42c7d76a8f07b6df241775d2a))
+* propagate error context ([a64444c](https://github.com/bec-project/bec_log_ingestor/commit/a64444ca59093ceff804c15ae87204e085f27994))
+* reduce log verbosity ([28a3afb](https://github.com/bec-project/bec_log_ingestor/commit/28a3afb38758b19e68395e163734f9a910391a9f))
+* wait for mock in tests ([17ea248](https://github.com/bec-project/bec_log_ingestor/commit/17ea248404d18f9cf9926fac1420adf6ee8eaa3c))
+
+
+### Features
+
+* add dynamic metrics message ([f20daaa](https://github.com/bec-project/bec_log_ingestor/commit/f20daaad238c7b5d1002a898d643e37c0a649a3d))
+* parse and format dynamic metrics ([60608ab](https://github.com/bec-project/bec_log_ingestor/commit/60608ab82abd4699273098f4eaa25f9bf429c039))
+* retry redis connection 10x ([78b33e9](https://github.com/bec-project/bec_log_ingestor/commit/78b33e95b7fe0205c1130508dc4a892b76bc86f2))
+
 ## [1.11.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.11.0...v1.11.1) (2026-03-04)
 
 
