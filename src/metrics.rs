@@ -296,7 +296,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
             break;
         }
         interval.tick().await;
-        println!("DEBUG: publishing metrics to Mimir");
+        println!("DEBUG: publishing collected metrics to Mimir");
         let open = rx.recv_many(&mut buffer, chunk_size).await;
         if open == 0 {
             break;
