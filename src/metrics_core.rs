@@ -353,7 +353,7 @@ fn process_dynamic_message<'a>(config: &'a DynamicMetric, raw_msg: &[u8]) -> Met
                         process_dynamic_message_value(
                             &val.bec_codec.data,
                             msg.timestamp
-                                .map(|t| t as i64)
+                                .map(|t| (t * 1000.0) as i64)
                                 .unwrap_or(chrono::Utc::now().timestamp_millis()),
                         ),
                     )
