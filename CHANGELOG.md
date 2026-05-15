@@ -1,3 +1,10 @@
+## [1.12.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.12.1...v1.12.2) (2026-05-15)
+
+
+### Bug Fixes
+
+* restart log ingestor on config change ([98760c8](https://github.com/bec-project/bec_log_ingestor/commit/98760c8dfab119d7f85e3a4a6cea6c7d5096289e))
+
 ## [1.12.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.12.0...v1.12.1) (2026-05-13)
 
 
