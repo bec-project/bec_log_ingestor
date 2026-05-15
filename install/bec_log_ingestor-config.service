@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart bec_log_ingestor after config changes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart bec_log_ingestor.service

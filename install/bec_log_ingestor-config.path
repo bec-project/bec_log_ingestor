@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch bec_log_ingestor config for changes
+
+[Path]
+PathChanged=/etc/bec_log_ingestor.toml
+Unit=bec_log_ingestor-config.service
+
+[Install]
+WantedBy=multi-user.target
