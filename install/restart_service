@@ -1,3 +1,4 @@
 # Try to restart the systemd service after installation
 systemctl daemon-reload
+systemctl enable --now bec_log_ingestor-config.path
 systemctl restart bec_log_ingestor.service
