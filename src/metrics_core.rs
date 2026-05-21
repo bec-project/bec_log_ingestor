@@ -52,6 +52,7 @@ where
 
 pub(crate) enum MetricOutput {
     NumericalSample(Sample),
+    LabeledSample((Sample, MetricLabels)),
     SampleForMultiplexing((i64, Vec<String>, Vec<String>)),
     MultipleSamples(Vec<(String, MetricOutput)>),
 }
@@ -60,6 +61,14 @@ impl MetricOutput {
     pub fn to_timeseries(&self, labels: HashMap<String, String>) -> Vec<TimeSeries> {
         match self {
             MetricOutput::NumericalSample(sample) => {
+                vec![TimeSeries {
+                    samples: vec![*sample],
+                    labels: labels_from_hashmap(&labels),
+                }]
+            }
+            MetricOutput::LabeledSample((sample, sample_labels)) => {
+                let mut labels = labels;
+                labels.extend(sample_labels.clone());
                 vec![TimeSeries {
                     samples: vec![*sample],
                     labels: labels_from_hashmap(&labels),
@@ -314,10 +323,13 @@ fn parsing_error<T: std::fmt::Debug>(
 
 fn process_dynamic_message_value(val: &DynamicMetricMessageMetricsValue, ts: i64) -> MetricOutput {
     match val {
-        DynamicMetricMessageMetricsValue::StrDynamicMetricValue(_) => {
-            println!("WARNING: received string format dynamic metric, ignoring");
-            MetricOutput::MultipleSamples(vec![])
-        }
+        DynamicMetricMessageMetricsValue::StrDynamicMetricValue(val) => MetricOutput::LabeledSample((
+            Sample {
+                value: 1.0,
+                timestamp: ts,
+            },
+            HashMap::from([("value".into(), val.value.clone())]),
+        )),
         DynamicMetricMessageMetricsValue::IntDynamicMetricValue(val) => {
             MetricOutput::NumericalSample(Sample {
                 value: val.value as f64,
@@ -491,6 +503,7 @@ url = \"http://127.0.0.1\"
                 dbg!(ts);
                 assert!(sample.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
             }
+            MetricOutput::LabeledSample(_) => panic!(),
             MetricOutput::SampleForMultiplexing(_) => panic!(),
             MetricOutput::MultipleSamples(_) => todo!(),
         }
@@ -516,9 +529,61 @@ url = \"http://127.0.0.1\"
                 assert_eq!(sample.value, 12.34);
                 assert_eq!(sample.timestamp, 5678);
             }
+            MetricOutput::LabeledSample(_) => panic!(),
             MetricOutput::SampleForMultiplexing(_) => panic!(),
             MetricOutput::MultipleSamples(_) => panic!(),
         }
+    }
+
+    #[test]
+    fn test_string_dynamic_metric_is_emitted_as_labeled_sample() {
+        let output = process_dynamic_message_value(
+            &DynamicMetricMessageMetricsValue::StrDynamicMetricValue(
+                crate::models::dynamic_metric_message::StrDynamicMetricValue {
+                    type_name: "str".into(),
+                    value: "cooldown".into(),
+                },
+            ),
+            5678,
+        );
+
+        match output {
+            MetricOutput::LabeledSample((sample, labels)) => {
+                assert_eq!(sample.value, 1.0);
+                assert_eq!(sample.timestamp, 5678);
+                assert_eq!(labels.get("value"), Some(&"cooldown".into()));
+            }
+            MetricOutput::NumericalSample(_) => panic!(),
+            MetricOutput::SampleForMultiplexing(_) => panic!(),
+            MetricOutput::MultipleSamples(_) => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_labeled_sample_timeseries_merges_labels() {
+        let output = MetricOutput::LabeledSample((
+            Sample {
+                value: 1.0,
+                timestamp: 5678,
+            },
+            HashMap::from([("value".into(), "cooldown".into())]),
+        ));
+        let timeseries = output.to_timeseries(HashMap::from([
+            ("__name__".into(), "dynamic_metric_state".into()),
+            ("beamline".into(), "x99xa".into()),
+        ]));
+
+        assert_eq!(timeseries.len(), 1);
+        let labels: HashMap<String, String> = timeseries[0]
+            .labels
+            .iter()
+            .map(|label| (label.name.clone(), label.value.clone()))
+            .collect();
+        assert_eq!(labels.get("__name__"), Some(&"dynamic_metric_state".into()));
+        assert_eq!(labels.get("beamline"), Some(&"x99xa".into()));
+        assert_eq!(labels.get("value"), Some(&"cooldown".into()));
+        assert_eq!(timeseries[0].samples[0].value, 1.0);
+        assert_eq!(timeseries[0].samples[0].timestamp, 5678);
     }
 
     struct TestMetricEnds {
