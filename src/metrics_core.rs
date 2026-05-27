@@ -53,11 +53,16 @@ where
 pub(crate) enum MetricOutput {
     NumericalSample(Sample),
     SampleForMultiplexing((i64, Vec<String>, Vec<String>)),
+    DynamicStrForMultiplex((i64, String, String, Vec<String>)),
     MultipleSamples(Vec<(String, MetricOutput)>),
 }
 
 impl MetricOutput {
-    pub fn to_timeseries(&self, labels: HashMap<String, String>) -> Vec<TimeSeries> {
+    pub fn to_timeseries(
+        &self,
+        mut labels: HashMap<String, String>,
+        name: &str,
+    ) -> Vec<TimeSeries> {
         match self {
             MetricOutput::NumericalSample(sample) => {
                 vec![TimeSeries {
@@ -65,19 +70,31 @@ impl MetricOutput {
                     labels: labels_from_hashmap(&labels),
                 }]
             }
-            MetricOutput::SampleForMultiplexing((sample, keys_to_multiplex, possible_values)) => {
+            MetricOutput::SampleForMultiplexing((
+                timestamp,
+                keys_to_multiplex,
+                possible_values,
+            )) => multiplex_samples(
+                *timestamp,
+                labels,
+                keys_to_multiplex.to_vec(),
+                possible_values.to_vec(),
+            ),
+            MetricOutput::MultipleSamples(samples) => samples
+                .iter()
+                .map(|(n, s)| s.to_timeseries(append_submetric_name(n, &labels), name))
+                .flatten()
+                .collect(),
+            MetricOutput::DynamicStrForMultiplex((timestamp, subname, value, possible_values)) => {
+                let full_name = name.to_string() + subname;
+                labels.insert(full_name.clone(), value.into());
                 multiplex_samples(
-                    *sample,
+                    *timestamp,
                     labels,
-                    keys_to_multiplex.to_vec(),
+                    vec![full_name],
                     possible_values.to_vec(),
                 )
             }
-            MetricOutput::MultipleSamples(samples) => samples
-                .iter()
-                .map(|(n, s)| s.to_timeseries(append_submetric_name(n, &labels)))
-                .flatten()
-                .collect(),
         }
     }
 }
@@ -145,8 +162,8 @@ pub(crate) fn multiplex_samples(
 
     let mut metric_values: Vec<(String, String)> = vec![];
     for k in keys_to_multiplex {
-        if let Some(v) = labels.remove(&k) {
-            metric_values.push((k, v));
+        if let Some(v) = dbg!(labels.remove(&k)) {
+            dbg!(metric_values.push((k, v)));
         }
     }
 
@@ -235,6 +252,7 @@ pub(crate) fn metric_spawner(
                 redis.clone(),
                 config.redis.clone(),
                 tx.clone(),
+                name.clone(),
             )),
         ),
     }
@@ -271,7 +289,7 @@ async fn polling_metric_loop<Args>(
         if let Some(extra_labels) = opt_extra_labels {
             owned_labels.extend(extra_labels);
         }
-        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels);
+        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels, "polling_metric".into());
         for ts in tss {
             if tx.send(ts).is_err() {
                 println!("TASK-FATAL: error transmitting metric to publisher channel");
@@ -312,11 +330,27 @@ fn parsing_error<T: std::fmt::Debug>(
     ))
 }
 
-fn process_dynamic_message_value(val: &DynamicMetricMessageMetricsValue, ts: i64) -> MetricOutput {
+fn process_dynamic_message_value(
+    val: &DynamicMetricMessageMetricsValue,
+    ts: i64,
+    name: &str,
+) -> MetricOutput {
     match val {
-        DynamicMetricMessageMetricsValue::StrDynamicMetricValue(_) => {
-            println!("WARNING: received string format dynamic metric, ignoring");
-            MetricOutput::MultipleSamples(vec![])
+        DynamicMetricMessageMetricsValue::StrDynamicMetricValue(val) => {
+            match &val.possible_values {
+                None => {
+                    println!(
+                        "WARNING: received deprecated string format dynamic metric without possible values, ignoring."
+                    );
+                    MetricOutput::MultipleSamples(vec![])
+                }
+                Some(possible_values) => MetricOutput::DynamicStrForMultiplex((
+                    ts,
+                    name.into(),
+                    val.value.clone(),
+                    possible_values.clone(),
+                )),
+            }
         }
         DynamicMetricMessageMetricsValue::IntDynamicMetricValue(val) => {
             MetricOutput::NumericalSample(Sample {
@@ -355,6 +389,7 @@ fn process_dynamic_message<'a>(config: &'a DynamicMetric, raw_msg: &[u8]) -> Met
                             msg.timestamp
                                 .map(|t| (t * 1000.0) as i64)
                                 .unwrap_or(chrono::Utc::now().timestamp_millis()),
+                            name,
                         ),
                     )
                 })
@@ -390,6 +425,7 @@ pub(crate) async fn dynamic_metric_future(
     redis: MultiplexedConnection,
     redis_config: RedisConfig,
     tx: UnboundedSender<TimeSeries>,
+    name: String,
 ) {
     match &config.read_type {
         RedisReadType::PubSub => {
@@ -422,7 +458,7 @@ pub(crate) async fn dynamic_metric_future(
                     if let Some(extra_labels) = opt_extra_labels {
                         owned_labels.extend(extra_labels);
                     }
-                    for ts in output.to_timeseries(owned_labels) {
+                    for ts in output.to_timeseries(owned_labels, &name) {
                         if tx.send(ts).is_err() {
                             panic!("TASK-FATAL: error transmitting metric to publisher channel");
                         }
@@ -492,7 +528,8 @@ url = \"http://127.0.0.1\"
                 assert!(sample.timestamp > (ts - 10_000)); // timestamp should be from the last ten seconds...
             }
             MetricOutput::SampleForMultiplexing(_) => panic!(),
-            MetricOutput::MultipleSamples(_) => todo!(),
+            MetricOutput::MultipleSamples(_) => panic!(),
+            MetricOutput::DynamicStrForMultiplex(_) => panic!(),
         }
     }
 
@@ -518,6 +555,7 @@ url = \"http://127.0.0.1\"
             }
             MetricOutput::SampleForMultiplexing(_) => panic!(),
             MetricOutput::MultipleSamples(_) => panic!(),
+            MetricOutput::DynamicStrForMultiplex(_) => panic!(),
         }
     }
 

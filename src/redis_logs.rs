@@ -210,7 +210,7 @@ pub async fn producer_loop(
 
 #[cfg(test)]
 mod tests {
-    use crate::models::LogRecord;
+    use crate::models::log_message::LogRecord;
 
     use super::*;
 

@@ -118,7 +118,7 @@ pub async fn consumer_loop(
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::assemble_config, models::LogRecord};
+    use crate::{config::assemble_config, models::log_message::LogRecord};
 
     use super::*;
 

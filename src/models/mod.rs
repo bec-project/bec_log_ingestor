@@ -1,9 +1,9 @@
 pub mod log_message;
 
-pub use log_message::{LogMessagePack, LogMsg, LogRecord, error_log_item};
+pub use log_message::{LogMessagePack, LogMsg, error_log_item};
 
 pub mod status_message;
 
-pub use status_message::{ServiceStatus, StatusMessage, StatusMessagePack};
+pub use status_message::{ServiceStatus, StatusMessagePack};
 
 pub mod dynamic_metric_message;
