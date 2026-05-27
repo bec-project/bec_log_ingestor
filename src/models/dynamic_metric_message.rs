@@ -320,6 +320,7 @@ pub struct StrDynamicMetricValue {
     #[serde(default = "defaults::str_dynamic_metric_value_type_name")]
     pub type_name: ::std::string::String,
     pub value: ::std::string::String,
+    pub possible_values: Option<Vec<String>>,
 }
 impl ::std::convert::From<&StrDynamicMetricValue> for StrDynamicMetricValue {
     fn from(value: &StrDynamicMetricValue) -> Self {
@@ -395,7 +396,8 @@ mod tests {
             Some(DynamicMetricMessageMetricsValue::StrDynamicMetricValue(
                 StrDynamicMetricValue {
                     type_name: "str".into(),
-                    value: "test_a".into()
+                    value: "test_a".into(),
+                    possible_values: None
                 }
             ))
         );
