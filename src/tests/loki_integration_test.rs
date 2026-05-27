@@ -193,7 +193,7 @@ async fn cleanup<T1, T2>(
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_loki_malformed() {
-    let (redis_container, server, mock, config) = test_setup(error_log_body()).await;
+    let (redis_container, _server, mock, config) = test_setup(error_log_body()).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
         .unwrap()
         .get_connection()
@@ -215,7 +215,7 @@ const ENCODED_LOG: &[u8; 663] = b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaB
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_loki_happy_path() {
-    let (redis_container, server, mock, config) = test_setup(log_body()).await;
+    let (redis_container, _server, mock, config) = test_setup(log_body()).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
         .unwrap()
         .get_connection()
