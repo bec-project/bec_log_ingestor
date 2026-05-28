@@ -82,8 +82,7 @@ impl MetricOutput {
             ),
             MetricOutput::MultipleSamples(samples) => samples
                 .iter()
-                .map(|(n, s)| s.to_timeseries(append_submetric_name(n, &labels), name))
-                .flatten()
+                .flat_map(|(n, s)| s.to_timeseries(append_submetric_name(n, &labels), name))
                 .collect(),
             MetricOutput::DynamicStrForMultiplex((timestamp, subname, value, possible_values)) => {
                 let full_name = name.to_string() + subname;
@@ -162,8 +161,8 @@ pub(crate) fn multiplex_samples(
 
     let mut metric_values: Vec<(String, String)> = vec![];
     for k in keys_to_multiplex {
-        if let Some(v) = dbg!(labels.remove(&k)) {
-            dbg!(metric_values.push((k, v)));
+        if let Some(v) = labels.remove(&k) {
+            metric_values.push((k, v));
         }
     }
 
@@ -193,11 +192,7 @@ pub(crate) fn labels_from_hashmap(labels: &MetricLabels) -> Vec<Label> {
         .collect()
 }
 pub(crate) fn append_submetric_name(submetric_name: &str, labels: &MetricLabels) -> MetricLabels {
-    let name = labels
-        .get("__name__")
-        .map(|n| n.clone())
-        .unwrap_or_default()
-        + submetric_name;
+    let name = labels.get("__name__").cloned().unwrap_or_default() + submetric_name;
     let mut labels = labels.clone();
     labels.insert("__name__".into(), name);
     labels
@@ -289,7 +284,7 @@ async fn polling_metric_loop<Args>(
         if let Some(extra_labels) = opt_extra_labels {
             owned_labels.extend(extra_labels);
         }
-        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels, "polling_metric".into());
+        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels, "polling_metric");
         for ts in tss {
             if tx.send(ts).is_err() {
                 println!("TASK-FATAL: error transmitting metric to publisher channel");
@@ -360,7 +355,7 @@ fn process_dynamic_message_value(
         }
         DynamicMetricMessageMetricsValue::FloatDynamicMetricValue(val) => {
             MetricOutput::NumericalSample(Sample {
-                value: val.value as f64,
+                value: val.value,
                 timestamp: ts,
             })
         }
@@ -413,7 +408,7 @@ fn dynamic_polling_metric<'a>(
                 &config.key
             )))
         } else {
-            process_dynamic_message(&config, &val)
+            process_dynamic_message(config, &val)
         }
     })
 }
