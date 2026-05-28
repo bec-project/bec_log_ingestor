@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.12.2...v1.13.0) (2026-05-28)
+
+
+### Features
+
+* multiplex dynamic string metric if options are provided ([a970e00](https://github.com/bec-project/bec_log_ingestor/commit/a970e003ea430ec3f9b9a7fdd7198a91fb484bc0))
+
 ## [1.12.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.12.1...v1.12.2) (2026-05-15)
 
 
