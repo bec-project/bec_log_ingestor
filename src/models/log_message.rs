@@ -77,7 +77,7 @@ pub struct LogMessagePack {
     pub bec_codec: LogMessagePackInternal,
 }
 
-pub fn error_log_item() -> LogMessagePack {
+pub fn error_log_item(data: Vec<redis::Value>) -> LogMessagePack {
     LogMessagePack {
         bec_codec: LogMessagePackInternal {
             encoder_name: "".into(),
@@ -91,7 +91,7 @@ pub fn error_log_item() -> LogMessagePack {
                             seconds: 0.0,
                         },
                         exception: None,
-                        extra: ().into(),
+                        extra: data.iter().map(|v| format!("{:?}",v)).collect::<Vec<String>>().into(),
                         file: File {
                             name: "".into(),
                             path: "".into(),
@@ -103,7 +103,7 @@ pub fn error_log_item() -> LogMessagePack {
                             no: 100,
                         },
                         line: 0,
-                        message: "Error processing log messages from Redis!".into(),
+                        message: "Error in ingestor processing log messages from Redis! Check log ingestor output for details.".into(),
                         module: "".into(),
                         name: "".into(),
                         process: NameId {
@@ -116,10 +116,10 @@ pub fn error_log_item() -> LogMessagePack {
                         },
                         time: Timestamp {
                             repr: "".into(),
-                            timestamp: 0.0,
+                            timestamp: chrono::Utc::now().timestamp_millis() as f64 / 1000.,
                         },
                     },
-                    service_name: "".into(),
+                    service_name: "bec_log_ingestor".into(),
                     text: "".into(),
                 },
                 metadata: ().into(),
