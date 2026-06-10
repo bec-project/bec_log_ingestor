@@ -102,7 +102,7 @@ fn read_logs(
     Ok((last_id, logs))
 }
 
-fn process_data(values: Vec<redis::Value>) -> Result<Vec<LogMessagePack>, RedisError> {
+fn process_data(values: &Vec<redis::Value>) -> Result<Vec<LogMessagePack>, RedisError> {
     let un_valued: Vec<Vec<u8>> = values
         .iter()
         .map(|e| match e {
@@ -118,7 +118,7 @@ fn process_data(values: Vec<redis::Value>) -> Result<Vec<LogMessagePack>, RedisE
         .map_err(|_| RedisError::Retryable(BAD_DATA.into()))
 }
 
-fn extract_records(messages: Vec<LogMessagePack>) -> Vec<LogMsg> {
+fn extract_records(messages: &Vec<LogMessagePack>) -> Vec<LogMsg> {
     messages
         .iter()
         .map(|e| e.bec_codec.data.log_msg.clone())
@@ -190,9 +190,10 @@ pub async fn producer_loop(
                     if packed.is_empty() {
                         continue;
                     }
-                    for record in
-                        extract_records(process_data(packed).unwrap_or(vec![error_log_item()]))
-                    {
+                    for record in extract_records(&process_data(&packed).unwrap_or_else(|_| {
+                        println!("WARNING: failed to process record: {:?}", &packed);
+                        vec![error_log_item(packed.clone())]
+                    })) {
                         if tx.send(record).is_err() {
                             println!("INFO: Receiver dropped, stopping...");
                             break 'main Ok(());
@@ -216,29 +217,29 @@ mod tests {
 
     #[test]
     fn test_error_log_item_contents() {
-        let err_item = error_log_item();
+        let err_item = error_log_item(vec![]);
         assert_eq!(err_item.bec_codec.data.log_msg.record.level.name, "ERROR");
         assert_eq!(
             err_item.bec_codec.data.log_msg.record.message,
-            "Error processing log messages from Redis!"
+            "Error in ingestor processing log messages from Redis! Check log ingestor output for details."
         );
     }
 
     #[test]
     fn test_extract_records() {
-        let mut pack = error_log_item();
+        let mut pack = error_log_item(vec![]);
         pack.bec_codec.data.log_msg.record.message = "test".to_string();
-        let records = extract_records(vec![pack.clone()]);
+        let records = extract_records(&vec![pack.clone()]);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].record.message, "test");
     }
 
     #[test]
     fn test_process_data_valid() {
-        let pack = error_log_item();
+        let pack = error_log_item(vec![]);
         let bytes = rmp_serde::to_vec(&pack).unwrap();
         let redis_val = redis::Value::BulkString(bytes.into());
-        let result = process_data(vec![redis_val]);
+        let result = process_data(&vec![redis_val]);
         assert!(result.is_ok());
         let unpacked = result.unwrap();
         assert_eq!(unpacked.len(), 1);
@@ -251,19 +252,19 @@ mod tests {
     #[test]
     fn test_process_data_invalid_type() {
         let redis_val = redis::Value::Int(42);
-        let result = process_data(vec![redis_val]);
+        let result = process_data(&vec![redis_val]);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_extract_records_empty() {
-        let records = extract_records(vec![]);
+        let records = extract_records(&vec![]);
         assert!(records.is_empty());
     }
 
     #[test]
     fn test_logrecord_serde_roundtrip() {
-        let record = error_log_item().bec_codec.data.log_msg.record.clone();
+        let record = error_log_item(vec![]).bec_codec.data.log_msg.record.clone();
         let ser = serde_json::to_string(&record).unwrap();
         let de: LogRecord = serde_json::from_str(&ser).unwrap();
         assert_eq!(record, de);
