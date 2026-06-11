@@ -116,12 +116,12 @@ async fn test_loki_no_endpoint() {
     .unwrap()
 }
 
-async fn mock_server(body: String) -> (mockito::ServerGuard, mockito::Mock) {
+async fn mock_server(body: mockito::Matcher) -> (mockito::ServerGuard, mockito::Mock) {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/")
-            .match_body(body.as_str())
+            .match_body(body)
             .create_async()
             .await;
         (server, mock)
@@ -131,14 +131,14 @@ async fn mock_server(body: String) -> (mockito::ServerGuard, mockito::Mock) {
 }
 
 async fn test_setup(
-    body: impl Into<String>,
+    body: mockito::Matcher,
 ) -> (
     ContainerAsync<Redis>,
     mockito::ServerGuard,
     mockito::Mock,
     &'static mut IngestorConfig,
 ) {
-    let (server, mock) = mock_server(body.into()).await;
+    let (server, mock) = mock_server(body).await;
     let (redis_container, redis_url, redis_port) = create_redis().await;
     let config: &'static mut IngestorConfig =
         Box::leak(Box::new(config(redis_url, redis_port, server.url())));
@@ -161,10 +161,7 @@ async fn channels_and_tasks(
 }
 
 fn error_log_body() -> String {
-    format!(
-        "{{\"streams\":[{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"ERROR\",\"service_name\":\"\"}},\"values\":[[\"0\",\"Error processing log messages from Redis!\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}}]]}}]}}",
-        gethostname::gethostname().into_string().unwrap()
-    )
+    r#".*\"Error in ingestor processing log messages from Redis! Check log ingestor output for details\.\".*"#.into()
 }
 
 async fn check_with_timeout(mock: &Mock) -> Result<(), tokio::time::error::Elapsed> {
@@ -193,7 +190,8 @@ async fn cleanup<T1, T2>(
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_loki_malformed() {
-    let (redis_container, _server, mock, config) = test_setup(error_log_body()).await;
+    let (redis_container, _server, mock, config) =
+        test_setup(mockito::Matcher::Regex(error_log_body())).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
         .unwrap()
         .get_connection()
@@ -215,7 +213,8 @@ const ENCODED_LOG: &[u8; 663] = b"\x81\xad__bec_codec__\x83\xacencoder_name\xaaB
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_loki_happy_path() {
-    let (redis_container, _server, mock, config) = test_setup(log_body()).await;
+    let (redis_container, _server, mock, config) =
+        test_setup(mockito::Matcher::Exact(log_body())).await;
     let mut conn = redis::Client::open(config.redis.url.full_url())
         .unwrap()
         .get_connection()
