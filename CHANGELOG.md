@@ -1,3 +1,11 @@
+## [1.13.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.0...v1.13.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* error log integration test ([7394817](https://github.com/bec-project/bec_log_ingestor/commit/739481730891dfc06a755247a420b02a8257c588))
+* use now timestamp for error log and forward data ([e58e147](https://github.com/bec-project/bec_log_ingestor/commit/e58e1471d64fead0367d60259f843c1176b57ec0))
+
 # [1.13.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.12.2...v1.13.0) (2026-05-28)
 
 
