@@ -46,6 +46,7 @@ tokio = { version = "1.50.0", features = [
 toml = "1.0.6"
 rustls = { version = "0.23" }
 gethostname = "1.1.0"
+serde_path_to_error = "0.1.20"
 
 [dev-dependencies]
 mockito = "1.7.2"
