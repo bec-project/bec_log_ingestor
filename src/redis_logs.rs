@@ -1,6 +1,7 @@
 use crate::config::IngestorConfig;
 use crate::models::{LogMessagePack, LogMsg, error_log_item};
 use redis::Commands;
+use rmp_serde::Deserializer;
 use std::{thread, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -113,9 +114,15 @@ fn process_data(values: &Vec<redis::Value>) -> Result<Vec<LogMessagePack>, Redis
 
     un_valued
         .iter()
-        .map(|e| rmp_serde::from_slice::<LogMessagePack>(e))
-        .collect::<Result<Vec<LogMessagePack>, rmp_serde::decode::Error>>()
-        .map_err(|_| RedisError::Retryable(BAD_DATA.into()))
+        .map(|e| {
+            let mut de = Deserializer::from_read_ref(&e);
+            serde_path_to_error::deserialize::<_, LogMessagePack>(&mut de)
+        })
+        .collect::<Result<Vec<LogMessagePack>, serde_path_to_error::Error<_>>>()
+        .map_err(|err| {
+            println!("WARNING: Parse error in message {:?}", err);
+            RedisError::Retryable(BAD_DATA.into())
+        })
 }
 
 fn extract_records(messages: &Vec<LogMessagePack>) -> Vec<LogMsg> {
