@@ -1,3 +1,10 @@
+## [1.13.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.1...v1.13.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* allow parsing exception as dict ([3242d32](https://github.com/bec-project/bec_log_ingestor/commit/3242d320679743fd8941dd0cc3480bc00d90a250))
+
 ## [1.13.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.0...v1.13.1) (2026-06-11)
 
 
