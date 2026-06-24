@@ -1,3 +1,10 @@
+## [1.13.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.2...v1.13.3) (2026-06-24)
+
+
+### Bug Fixes
+
+* check for redis readiness before starting the service ([cafc867](https://github.com/bec-project/bec_log_ingestor/commit/cafc867034076d50591defbbe658076774cb3681))
+
 ## [1.13.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.1...v1.13.2) (2026-06-17)
 
 
