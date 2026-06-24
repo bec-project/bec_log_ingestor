@@ -1,5 +1,6 @@
 [Unit]
 Description=bec-log-ingestor service
+Wants=redis.service
 After=redis.service
 StartLimitBurst=3
 StartLimitIntervalSec=120
@@ -8,6 +9,7 @@ StartLimitIntervalSec=120
 Type=exec
 User=bec_log_ingestor
 LoadCredential=bec_log_ingestor.toml:/etc/bec_log_ingestor.toml
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do redis-cli ping && exit 0; sleep 1; done; echo "Redis did not become ready within 30s" >&2; exit 1'
 ExecStart=/usr/local/bin/bec_log_ingestor -c ${CREDENTIALS_DIRECTORY}/bec_log_ingestor.toml
 Restart=on-failure
 RestartSec=5

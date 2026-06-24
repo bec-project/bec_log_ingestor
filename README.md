@@ -50,7 +50,7 @@ The `dtype` parameter represents how to parse the information obtained from Redi
 
 ### Deployment
 
-To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`. The RPM also installs a systemd path unit that watches this file and `try-restart`s `bec_log_ingestor.service` when it changes. For SLS deployments this is managed in puppet already.
+To use the systemd service as-is, a config should be created at `/etc/bec_log_ingestor.toml`, following the example in `install/example_config.toml`. The packaged unit pulls in `redis.service` and waits up to 30 seconds for `redis-cli ping` to succeed before starting the ingestor, so deployments should ensure `redis-cli` is available and Redis is reachable via its default local connection settings. The RPM also installs a systemd path unit that watches this file and `try-restart`s `bec_log_ingestor.service` when it changes. For SLS deployments this is managed in puppet already.
 
 Published RPM packages are signed by PGP, the corresponding public key is:
 
