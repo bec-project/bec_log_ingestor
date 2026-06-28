@@ -1,3 +1,4 @@
+use std::process::exit;
 use std::{collections::BTreeMap, time::Duration};
 
 use tokio::{
@@ -7,7 +8,7 @@ use tokio::{
 
 use crate::{
     config::{IngestorConfig, LokiConfig},
-    models::LogMsg,
+    models::{LogMsg, RedisLogBatch},
 };
 
 /// Convert a LogRecord to the document we want Loki to ingest
@@ -67,11 +68,19 @@ fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_jso
 }
 
 pub async fn consumer_loop(
-    rx: &mut mpsc::UnboundedReceiver<LogMsg>,
+    rx: &mut mpsc::UnboundedReceiver<RedisLogBatch>,
+    ack_tx: mpsc::UnboundedSender<Vec<String>>,
     config: &'static IngestorConfig,
 ) {
-    let mut buffer: Vec<LogMsg> = Vec::with_capacity(config.loki.chunk_size.into());
-    let client = reqwest::Client::new();
+    let mut buffer: Vec<RedisLogBatch> = Vec::with_capacity(config.loki.chunk_size.into());
+    let mut records: Vec<LogMsg> = Vec::with_capacity(config.loki.chunk_size.into());
+    let mut ack_ids: Vec<String> = Vec::with_capacity(config.loki.chunk_size.into());
+    let mut body = String::new();
+    let mut retries: u8 = 0;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("Failed to build Loki HTTP client");
     let mut interval: Interval = (&config.loki.push_interval).into();
     println!(
         "INFO: Starting Loki consumer loop, pushing at {:?}.",
@@ -80,37 +89,74 @@ pub async fn consumer_loop(
 
     loop {
         interval.tick().await;
-        let open = rx
-            .recv_many(&mut buffer, config.loki.chunk_size.into())
-            .await;
+        let open = if buffer.is_empty() {
+            let open = rx
+                .recv_many(&mut buffer, config.loki.chunk_size.into())
+                .await;
+            if open == 0 {
+                break;
+            }
+            open
+        } else {
+            records.len()
+        };
         println!("DEBUG: Received {open} logs from redis.");
-        if open == 0 {
-            break;
+        if body.is_empty() {
+            records.clear();
+            ack_ids.clear();
+            for batch in &buffer {
+                ack_ids.extend(batch.entry_ids.iter().cloned());
+                records.extend(batch.records.iter().cloned());
+            }
+            body = make_json_body(&records, config).to_string();
         }
-        let body = make_json_body(&buffer, config).to_string();
         match client
             .post(&config.loki.url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .basic_auth(&config.loki.auth.username, Some(&config.loki.auth.password))
-            .body(body)
+            .body(body.clone())
             .send()
             .await
         {
             Ok(res) => {
-                println!("DEBUG: Sent {open} logs to loki. Response: {res:?}");
                 if !res.status().is_success() {
                     let text = res
                         .text()
                         .await
                         .unwrap_or("[Unable to decode response text!]".into());
-                    println!("ERROR: Received error response: {text} ");
+                    println!("ERROR: Received error response from Loki: {text}");
+                    retries = retries.saturating_add(1);
+                    if retries >= 3 {
+                        println!("ERROR: Maximum Loki retry attempts exceeded, exiting.");
+                        exit(69);
+                    }
+                    println!("WARNING: Retrying buffered logs in 5s.");
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
+                retries = 0;
+                println!("DEBUG: Sent {open} logs to loki. Response: {res:?}");
+                if ack_tx.send(ack_ids.clone()).is_err() {
+                    println!("ERROR: Failed to send ack IDs back to Redis producer, exiting.");
+                    exit(69);
                 }
             }
             Err(res) => {
                 println!("ERROR: {res:?}");
+                retries = retries.saturating_add(1);
+                if retries >= 3 {
+                    println!("ERROR: Maximum Loki retry attempts exceeded, exiting.");
+                    exit(69);
+                }
+                println!("WARNING: Retrying buffered logs in 5s.");
+                sleep(Duration::from_secs(5)).await;
+                continue;
             }
         };
         buffer.clear();
+        records.clear();
+        ack_ids.clear();
+        body.clear();
         sleep(Duration::from_millis(10)).await;
     }
     println!("INFO: Producer dropped, consumer exiting");

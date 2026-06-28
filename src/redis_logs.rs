@@ -1,5 +1,5 @@
 use crate::config::IngestorConfig;
-use crate::models::{LogMessagePack, LogMsg, error_log_item};
+use crate::models::{LogMessagePack, LogMsg, RedisLogBatch, error_log_item};
 use redis::Commands;
 use rmp_serde::Deserializer;
 use std::{thread, time::Duration};
@@ -65,7 +65,7 @@ fn stream_read_opts(config: &'static IngestorConfig) -> redis::streams::StreamRe
     redis::streams::StreamReadOptions::default()
         .count(config.redis.chunk_size.into())
         .block(config.redis.blocktime_millis)
-        .group("log-ingestor", "log-ingestor")
+        .group(&config.redis.consumer_group, &config.redis.consumer_id)
 }
 
 /// Fetch unread logs for redis.
@@ -74,13 +74,13 @@ fn read_logs(
     redis_conn: &mut redis::Connection,
     last_id: &String,
     config: &'static IngestorConfig,
-) -> Result<(Option<String>, Vec<redis::Value>), RedisError> {
+) -> Result<Vec<(String, redis::Value)>, RedisError> {
     let raw_reply: redis::streams::StreamReadReply = redis_conn
         .xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))
         .map_err(retryable_code)?;
 
     if raw_reply.keys.is_empty() {
-        return Ok((Some(last_id.to_owned()), vec![]));
+        return Ok(vec![]);
     }
 
     let log_key = raw_reply
@@ -88,19 +88,19 @@ fn read_logs(
         .first()
         .ok_or_else(|| RedisError::Retryable(KEY_MISMATCH.into()))?;
 
-    let last_id = log_key.ids.last().map(|i| i.id.clone());
-    let logs = log_key
+    log_key
         .ids
         .iter()
         .map(|e| {
-            e.map
-                .get("data")
-                .ok_or_else(|| RedisError::Retryable(NO_DATA.into()))
-                .cloned()
+            Ok((
+                e.id.clone(),
+                e.map
+                    .get("data")
+                    .ok_or_else(|| RedisError::Retryable(NO_DATA.into()))
+                    .cloned()?,
+            ))
         })
-        .collect::<Result<Vec<redis::Value>, RedisError>>()?;
-
-    Ok((last_id, logs))
+        .collect::<Result<Vec<(String, redis::Value)>, RedisError>>()
 }
 
 fn process_data(values: &Vec<redis::Value>) -> Result<Vec<LogMessagePack>, RedisError> {
@@ -130,6 +130,20 @@ fn extract_records(messages: &Vec<LogMessagePack>) -> Vec<LogMsg> {
         .iter()
         .map(|e| e.bec_codec.data.log_msg.clone())
         .collect()
+}
+
+fn ack_logs(
+    redis_conn: &mut redis::Connection,
+    config: &'static IngestorConfig,
+    entry_ids: &[String],
+) -> Result<(), RedisError> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
+    let _: usize = redis_conn
+        .xack(&LOGGING_ENDPOINT, &config.redis.consumer_group, entry_ids)
+        .map_err(retryable_code)?;
+    Ok(())
 }
 
 fn setup_consumer_group(
@@ -180,30 +194,57 @@ fn check_connection(
 }
 
 pub async fn producer_loop(
-    tx: mpsc::UnboundedSender<LogMsg>,
+    tx: mpsc::UnboundedSender<RedisLogBatch>,
+    mut ack_rx: mpsc::UnboundedReceiver<Vec<String>>,
     config: &'static IngestorConfig,
     max_retries: u8,
     initial_sleep: u64,
 ) -> Result<(), RedisError> {
     let mut redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
-    let stream_read_id: String = ">".into();
+    let mut stream_read_id: String = "0".into();
     println!("DEBUG: Starting Loki task producer loop");
     'main: loop {
         // Sleep between blocking calls prevents starvation of other tasks in thread limited environments
         sleep(Duration::from_millis(10)).await;
         match read_logs(&mut redis_conn, &stream_read_id, config) {
-            Ok(response) => {
-                if let (Some(_), packed) = response {
-                    if packed.is_empty() {
-                        continue;
+            Ok(entries) => {
+                if entries.is_empty() {
+                    if stream_read_id != ">" {
+                        stream_read_id = ">".into();
                     }
-                    for record in extract_records(&process_data(&packed).unwrap_or_else(|_| {
-                        println!("WARNING: failed to process record: {:?}", &packed);
-                        vec![error_log_item(packed.clone())]
-                    })) {
-                        if tx.send(record).is_err() {
-                            println!("INFO: Receiver dropped, stopping...");
-                            break 'main Ok(());
+                    continue;
+                }
+
+                let packed: Vec<redis::Value> =
+                    entries.iter().map(|(_, value)| value.clone()).collect();
+                let entry_ids: Vec<String> = entries.iter().map(|(id, _)| id.clone()).collect();
+                let records = extract_records(&process_data(&packed).unwrap_or_else(|_| {
+                    println!("WARNING: failed to process record: {:?}", &packed);
+                    vec![error_log_item(packed.clone())]
+                }));
+                let batch = RedisLogBatch { entry_ids, records };
+
+                stream_read_id = batch.entry_ids.last().cloned().unwrap_or(stream_read_id);
+
+                if tx.send(batch).is_err() {
+                    println!("INFO: Receiver dropped, stopping...");
+                    break 'main Ok(());
+                }
+
+                let acked_ids = match ack_rx.recv().await {
+                    Some(acked_ids) => acked_ids,
+                    None => {
+                        println!("INFO: Ack receiver dropped, stopping...");
+                        break 'main Ok(());
+                    }
+                };
+                loop {
+                    match ack_logs(&mut redis_conn, config, &acked_ids) {
+                        Ok(()) => break,
+                        Err(e) => {
+                            println!("ERROR: {:?}", e);
+                            redis_conn =
+                                create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
                         }
                     }
                 }
