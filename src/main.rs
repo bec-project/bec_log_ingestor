@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc;
 
 mod models;
-use crate::models::LogMsg;
+use crate::models::RedisLogBatch;
 
 mod config;
 use crate::config::{IngestorConfig, assemble_config};
@@ -69,9 +69,16 @@ async fn run_services(config: &'static IngestorConfig) {
 
     if config.enable_logging {
         println!("DEBUG: Starting log ingestor task...");
-        let (tx, mut rx) = mpsc::unbounded_channel::<LogMsg>();
-        let producer = tokio::spawn(producer_loop(tx, config, MAX_RETRIES, INITIAL_SLEEP));
-        consumer_loop(&mut rx, config).await;
+        let (tx, mut rx) = mpsc::unbounded_channel::<RedisLogBatch>();
+        let (ack_tx, ack_rx) = mpsc::unbounded_channel::<Vec<String>>();
+        let producer = tokio::spawn(producer_loop(
+            tx,
+            ack_rx,
+            config,
+            MAX_RETRIES,
+            INITIAL_SLEEP,
+        ));
+        consumer_loop(&mut rx, ack_tx, config).await;
         let _ = tokio::join!(producer);
     } else {
         _ = tokio::join!(metrics);

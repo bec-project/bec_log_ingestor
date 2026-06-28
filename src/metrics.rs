@@ -267,13 +267,8 @@ async fn watchdog_loop(
             );
             for name in finished {
                 if let Some(metric_def) = metrics.get(&name) {
-                    match metric_def {
-                        crate::metrics_core::MetricDefinition::Static(_) => {
-                            let (_, handle) = spawner((&name, metric_def));
-                            futs.lock().await.insert(name, handle);
-                        }
-                        crate::metrics_core::MetricDefinition::Dynamic(_) => todo!(),
-                    }
+                    let (_, handle) = spawner((&name, metric_def));
+                    futs.lock().await.insert(name, handle);
                 }
             }
         }
@@ -286,9 +281,13 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
     let chunk_size = 100;
     let mut buffer: Vec<TimeSeries> = Vec::with_capacity(chunk_size);
     let mut proto_encoded_buffer: Vec<u8> = Vec::new();
+    let mut compressed_buffer: Vec<u8> = Vec::new();
     let mut snap_encoder = Encoder::new();
     let mut retries: u8 = 0;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("Failed to build metrics HTTP client");
     let mut interval: Interval = (&config.publish_interval).into();
 
     loop {
@@ -297,22 +296,32 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
         }
         interval.tick().await;
         println!("DEBUG: publishing collected metrics to Mimir");
-        let open = rx.recv_many(&mut buffer, chunk_size).await;
-        if open == 0 {
-            break;
+        let open = if buffer.is_empty() {
+            let open = rx.recv_many(&mut buffer, chunk_size).await;
+            if open == 0 {
+                break;
+            }
+            open
+        } else {
+            buffer.len()
+        };
+        if proto_encoded_buffer.is_empty() {
+            let write_request = WriteRequest {
+                timeseries: buffer.clone(),
+            };
+            proto_encoded_buffer.reserve(write_request.encoded_len());
+            let Ok(()) = write_request.encode(&mut proto_encoded_buffer) else {
+                println!("ERROR: encountered an error in protobuf encoding. Exiting.");
+                break;
+            };
         }
-        let write_request = WriteRequest {
-            timeseries: buffer.clone(),
-        };
-        proto_encoded_buffer.reserve(write_request.encoded_len());
-        let Ok(()) = write_request.encode(&mut proto_encoded_buffer) else {
-            println!("ERROR: encountered an error in protobuf encoding. Exiting.");
-            break;
-        };
-        let Ok(compressed) = snap_encoder.compress_vec(&proto_encoded_buffer) else {
-            println!("ERROR: encountered an error in snappy compression. Exiting.");
-            break;
-        };
+        if compressed_buffer.is_empty() {
+            let Ok(compressed) = snap_encoder.compress_vec(&proto_encoded_buffer) else {
+                println!("ERROR: encountered an error in snappy compression. Exiting.");
+                break;
+            };
+            compressed_buffer = compressed;
+        }
 
         match client
             .post(&config.url)
@@ -320,34 +329,45 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
             .header("Content-Encoding", "snappy")
             .header("User-Agent", format!("bec_log_ingestor v{APP_VERSION}"))
             .basic_auth(&config.auth.username, Some(&config.auth.password))
-            .body(compressed)
+            .body(compressed_buffer.clone())
             .send()
             .await
         {
             Ok(res) => {
-                retries = 0;
-                println!("DEBUG: Sent {open} metrics to Mimir.");
                 if !res.status().is_success() {
                     let text = res
                         .text()
                         .await
                         .unwrap_or("[Unable to decode response text!]".into());
-                    println!("ERROR: Received error response: {text} ");
+                    println!("ERROR: Received error response: {text}");
+                    retries = retries.saturating_add(1);
+                    if retries >= 3 {
+                        println!("ERROR: Maximum retry attempts exceeded, exiting.");
+                        exit(0x45); // Service unavailable
+                    }
+                    println!("DEBUG: Retrying in 5s.");
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
                 }
+                retries = 0;
+                println!("DEBUG: Sent {open} metrics to Mimir.");
             }
             Err(res) => {
                 println!("ERROR: {res:?}");
-                if retries == 3 {
+                retries = retries.saturating_add(1);
+                if retries >= 3 {
                     println!("ERROR: Maximum retry attempts exceeded, exiting.");
                     exit(0x45); // Service unavailable
                 }
+                println!("WARNING: Send attempt {retries} failed; will retry buffered metrics.");
                 println!("DEBUG: Retrying in 5s.");
                 sleep(Duration::from_secs(5)).await;
-                retries += 1;
+                continue;
             }
         };
         buffer.clear();
         proto_encoded_buffer.clear();
+        compressed_buffer.clear();
     }
     println!("INFO: Producer dropped, consumer exiting");
 }

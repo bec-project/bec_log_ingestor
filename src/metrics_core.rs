@@ -7,7 +7,7 @@ use crate::{
 };
 
 use futures::StreamExt;
-use redis::{AsyncCommands, Msg, aio::MultiplexedConnection};
+use redis::{AsyncCommands, aio::MultiplexedConnection};
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -19,7 +19,7 @@ use tokio::{
     spawn,
     sync::{Mutex, mpsc::UnboundedSender},
     task::JoinHandle,
-    time::{self, Interval},
+    time::{self, Duration, Interval, sleep},
 };
 
 pub mod prometheus {
@@ -401,7 +401,7 @@ fn dynamic_polling_metric<'a>(
         let val: Vec<u8> = redis
             .get(&config.key)
             .await
-            .map_err(|e| MetricError::Fatal(e.detail().unwrap_or("Unspecified").into()))?;
+            .map_err(|e| MetricError::Retryable(e.detail().unwrap_or("Unspecified").into()))?;
         if val.is_empty() {
             Err(MetricError::Retryable(format!(
                 "No value found at dynamically defined key: {:?}",
@@ -424,28 +424,65 @@ pub(crate) async fn dynamic_metric_future(
 ) {
     match &config.read_type {
         RedisReadType::PubSub => {
-            let client = redis::Client::open(redis_config.url.full_url())
-                .expect("Could not connect to redis!");
-            let mut pubsub = client
-                .get_async_pubsub()
-                .await
-                .expect("Could not get pubsub client!");
-            pubsub
-                .subscribe(&config.key)
-                .await
-                .expect("Could not subscribe to channel!");
-            pubsub
-                .on_message()
-                .map(|msg: Msg| {
-                    let payload: Vec<u8> = msg.get_payload().expect("Failed to extract payload!");
+            const PUBSUB_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+            loop {
+                if STOP_METRICS.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let client = match redis::Client::open(redis_config.url.full_url()) {
+                    Ok(client) => client,
+                    Err(error) => {
+                        println!(
+                            "WARNING: Could not connect pubsub metric {name} to redis: {error}"
+                        );
+                        sleep(PUBSUB_RETRY_DELAY).await;
+                        continue;
+                    }
+                };
+                let mut pubsub = match client.get_async_pubsub().await {
+                    Ok(pubsub) => pubsub,
+                    Err(error) => {
+                        println!(
+                            "WARNING: Could not create pubsub client for metric {name}: {error}"
+                        );
+                        sleep(PUBSUB_RETRY_DELAY).await;
+                        continue;
+                    }
+                };
+                if let Err(error) = pubsub.subscribe(&config.key).await {
+                    println!(
+                        "WARNING: Could not subscribe pubsub metric {name} to {}: {error}",
+                        &config.key
+                    );
+                    sleep(PUBSUB_RETRY_DELAY).await;
+                    continue;
+                }
+
+                let mut messages = pubsub.on_message();
+                while let Some(msg) = messages.next().await {
+                    if STOP_METRICS.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let payload: Vec<u8> = match msg.get_payload() {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            println!(
+                                "WARNING: Failed to extract payload for pubsub metric {name}: {error}"
+                            );
+                            continue;
+                        }
+                    };
                     let (output, opt_extra_labels) =
                         match process_dynamic_message(&config, &payload) {
                             Err(MetricError::Fatal(error_msg)) => {
-                                panic!("FATAL: {error_msg}")
+                                println!("FATAL: {error_msg}");
+                                return;
                             }
                             Err(MetricError::Retryable(error_msg)) => {
                                 println!("WARNING: {error_msg}");
-                                return;
+                                continue;
                             }
                             Ok(res) => res,
                         };
@@ -455,12 +492,15 @@ pub(crate) async fn dynamic_metric_future(
                     }
                     for ts in output.to_timeseries(owned_labels, &name) {
                         if tx.send(ts).is_err() {
-                            panic!("TASK-FATAL: error transmitting metric to publisher channel");
+                            println!("TASK-FATAL: error transmitting metric to publisher channel");
+                            return;
                         }
                     }
-                })
-                .collect::<()>()
-                .await
+                }
+
+                println!("WARNING: Pubsub stream for metric {name} ended; reconnecting.");
+                sleep(PUBSUB_RETRY_DELAY).await;
+            }
         }
         RedisReadType::Poll(interval_config) => {
             let c = config.clone();
