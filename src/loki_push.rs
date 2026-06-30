@@ -89,18 +89,14 @@ pub async fn consumer_loop(
 
     loop {
         interval.tick().await;
-        let open = if buffer.is_empty() {
+        if buffer.is_empty() {
             let open = rx
                 .recv_many(&mut buffer, config.loki.chunk_size.into())
                 .await;
             if open == 0 {
                 break;
             }
-            open
-        } else {
-            records.len()
         };
-        println!("DEBUG: Received {open} logs from redis.");
         if body.is_empty() {
             records.clear();
             ack_ids.clear();
@@ -110,6 +106,8 @@ pub async fn consumer_loop(
             }
             body = make_json_body(&records, config).to_string();
         }
+        let pending_messages = records.len();
+        println!("DEBUG: {pending_messages} log messages waiting to be pushed to Loki.");
         match client
             .post(&config.loki.url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -135,7 +133,7 @@ pub async fn consumer_loop(
                     continue;
                 }
                 retries = 0;
-                println!("DEBUG: Sent {open} logs to loki. Response: {res:?}");
+                println!("DEBUG: Sent {pending_messages} logs to Loki. Response: {res:?}");
                 if ack_tx.send(ack_ids.clone()).is_err() {
                     println!("ERROR: Failed to send ack IDs back to Redis producer, exiting.");
                     exit(69);
