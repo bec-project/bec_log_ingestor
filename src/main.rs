@@ -28,6 +28,7 @@ const MAX_RETRIES: u8 = 8;
 const INITIAL_SLEEP: u64 = 300;
 
 #[derive(clap::Parser, Debug)]
+#[command(version)]
 struct Args {
     /// Specify a config file
     #[arg(short = 'c', long = "config")]
