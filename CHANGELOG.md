@@ -1,3 +1,16 @@
+# [1.14.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.3...v1.14.0) (2026-06-30)
+
+
+### Bug Fixes
+
+* improve logging in consumer loop for better visibility of message processing ([9b9dfb5](https://github.com/bec-project/bec_log_ingestor/commit/9b9dfb53600d3786149676f16660f249ca6f3273))
+
+
+### Features
+
+* add version command to CLI arguments parser ([61b44c5](https://github.com/bec-project/bec_log_ingestor/commit/61b44c596dea7c50387503780fe84e443c07050d))
+* improve log/metrics recovery semantics ([ac72c73](https://github.com/bec-project/bec_log_ingestor/commit/ac72c733b1e4678d56cc0c6cc3cc88f6fa7ceafa))
+
 ## [1.13.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.2...v1.13.3) (2026-06-24)
 
 
