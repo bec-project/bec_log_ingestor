@@ -11,6 +11,17 @@ use crate::{
     models::{LogMsg, RedisLogBatch},
 };
 
+fn is_timestamp_too_old_response(text: &str) -> bool {
+    text.contains("timestamp too old")
+}
+
+fn retimestamp_logs_to_now(records: &mut [LogMsg]) {
+    let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+    for record in records {
+        record.record.time.timestamp = now;
+    }
+}
+
 /// Convert a LogRecord to the document we want Loki to ingest
 fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> (serde_json::Value, (String, String)) {
     (
@@ -122,6 +133,15 @@ pub async fn consumer_loop(
                         .text()
                         .await
                         .unwrap_or("[Unable to decode response text!]".into());
+                    if is_timestamp_too_old_response(&text) {
+                        println!(
+                            "WARNING: Retimestamping {pending_messages} buffered logs to now because Loki rejected them as too old: {text}"
+                        );
+                        retries = 0;
+                        retimestamp_logs_to_now(&mut records);
+                        body = make_json_body(&records, config).to_string();
+                        continue;
+                    }
                     println!("ERROR: Received error response from Loki: {text}");
                     retries = retries.saturating_add(1);
                     if retries >= 3 {
@@ -222,6 +242,29 @@ mod tests {
         let path = PathBuf::from("./install/example_config.toml");
         let metrics_path = PathBuf::from("./install/example_metrics_config.toml");
         Box::leak(Box::new(assemble_config((path, Some(metrics_path)))))
+    }
+
+    #[test]
+    fn test_detect_timestamp_too_old_response() {
+        assert!(is_timestamp_too_old_response(
+            "entry for stream '{foo=\"bar\"}' has timestamp too old: 2025-10-09T12:29:45Z"
+        ));
+        assert!(!is_timestamp_too_old_response("internal server error"));
+    }
+
+    #[test]
+    fn test_retimestamp_logs_to_now() {
+        let mut record: LogMsg = DummyLog {
+            msg: "hello".to_string(),
+            level: "info".to_string(),
+        }
+        .into();
+        record.record.time.timestamp = 1.0;
+        let mut records = vec![record];
+
+        retimestamp_logs_to_now(&mut records);
+
+        assert!(records[0].record.time.timestamp > 1.0);
     }
 
     #[test]
