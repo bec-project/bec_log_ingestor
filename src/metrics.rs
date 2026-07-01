@@ -35,6 +35,13 @@ fn is_timestamp_too_old_response(text: &str) -> bool {
     text.contains("timestamp too old")
 }
 
+fn should_retry_metrics_response(status: reqwest::StatusCode, text: &str) -> bool {
+    if status.is_server_error() {
+        return !text.contains("InstancesCount <= 0");
+    }
+    status.as_u16() == 429
+}
+
 fn retimestamp_timeseries_to_now(timeseries: &mut [TimeSeries]) {
     let now = chrono::Utc::now().timestamp_millis();
     for series in timeseries {
@@ -348,6 +355,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
         {
             Ok(res) => {
                 if !res.status().is_success() {
+                    let status = res.status();
                     let text = res
                         .text()
                         .await
@@ -363,6 +371,16 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
                         continue;
                     }
                     println!("ERROR: Received error response: {text}");
+                    if !should_retry_metrics_response(status, &text) {
+                        println!(
+                            "WARNING: Dropping {open} buffered metrics because the response is not retryable."
+                        );
+                        retries = 0;
+                        buffer.clear();
+                        proto_encoded_buffer.clear();
+                        compressed_buffer.clear();
+                        continue;
+                    }
                     retries = retries.saturating_add(1);
                     if retries >= 3 {
                         println!("ERROR: Maximum retry attempts exceeded, exiting.");
@@ -516,6 +534,26 @@ mod tests {
         ));
         assert!(!super::is_timestamp_too_old_response(
             "internal server error"
+        ));
+    }
+
+    #[test]
+    fn test_should_retry_metrics_response() {
+        assert!(super::should_retry_metrics_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "temporary backend failure"
+        ));
+        assert!(!super::should_retry_metrics_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "send data to ingesters: DoBatch: InstancesCount <= 0"
+        ));
+        assert!(super::should_retry_metrics_response(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            "rate limited"
+        ));
+        assert!(!super::should_retry_metrics_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            "bad request"
         ));
     }
 
