@@ -31,6 +31,19 @@ use tokio::{
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn is_timestamp_too_old_response(text: &str) -> bool {
+    text.contains("timestamp too old")
+}
+
+fn retimestamp_timeseries_to_now(timeseries: &mut [TimeSeries]) {
+    let now = chrono::Utc::now().timestamp_millis();
+    for series in timeseries {
+        for sample in &mut series.samples {
+            sample.timestamp = now;
+        }
+    }
+}
+
 //
 // METRIC FUNCTION DEFINITIONS
 //
@@ -339,6 +352,16 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
                         .text()
                         .await
                         .unwrap_or("[Unable to decode response text!]".into());
+                    if is_timestamp_too_old_response(&text) {
+                        println!(
+                            "WARNING: Retimestamping {open} buffered metrics to now because Mimir rejected them as too old: {text}"
+                        );
+                        retries = 0;
+                        retimestamp_timeseries_to_now(&mut buffer);
+                        proto_encoded_buffer.clear();
+                        compressed_buffer.clear();
+                        continue;
+                    }
                     println!("ERROR: Received error response: {text}");
                     retries = retries.saturating_add(1);
                     if retries >= 3 {
@@ -484,6 +507,34 @@ mod tests {
         } else {
             panic!("wrong type!")
         }
+    }
+
+    #[test]
+    fn test_detect_timestamp_too_old_response() {
+        assert!(super::is_timestamp_too_old_response(
+            "entry for stream '{foo=\"bar\"}' has timestamp too old: 2025-10-09T12:29:45Z"
+        ));
+        assert!(!super::is_timestamp_too_old_response(
+            "internal server error"
+        ));
+    }
+
+    #[test]
+    fn test_retimestamp_timeseries_to_now() {
+        let mut timeseries = vec![TimeSeries {
+            labels: Vec::from([Label {
+                name: "__name__".into(),
+                value: "test".into(),
+            }]),
+            samples: Vec::from([Sample {
+                value: 1.0,
+                timestamp: 0,
+            }]),
+        }];
+
+        super::retimestamp_timeseries_to_now(&mut timeseries);
+
+        assert!(timeseries[0].samples[0].timestamp > 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]
