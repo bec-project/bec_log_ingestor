@@ -1,3 +1,11 @@
+## [1.14.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.0...v1.14.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* handle "timestamp too old" response from Loki and Mimir ([3b1e211](https://github.com/bec-project/bec_log_ingestor/commit/3b1e211e729f8b7eb4d2929ccfd98566b85c1cec))
+* skip malformed messages ([201c42a](https://github.com/bec-project/bec_log_ingestor/commit/201c42a4863e72e3025ccf7f05a38f6140601aee))
+
 # [1.14.0](https://github.com/bec-project/bec_log_ingestor/compare/v1.13.3...v1.14.0) (2026-06-30)
 
 
