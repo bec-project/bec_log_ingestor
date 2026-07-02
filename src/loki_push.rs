@@ -30,7 +30,12 @@ fn dropped_logs_summary(records: &[LogMsg]) -> String {
         .iter()
         .take(MAX_LOGS_TO_PRINT)
         .map(|record| {
-            let mut message: String = record.record.message.chars().take(MAX_MESSAGE_CHARS).collect();
+            let mut message: String = record
+                .record
+                .message
+                .chars()
+                .take(MAX_MESSAGE_CHARS)
+                .collect();
             if record.record.message.chars().count() > MAX_MESSAGE_CHARS {
                 message.push_str("...");
             }
@@ -186,9 +191,14 @@ pub async fn consumer_loop(
                         println!(
                             "WARNING: Acknowledging {pending_messages} buffered logs and stopping because the response is not retryable."
                         );
-                        println!("WARNING: Dropped log contents: {}", dropped_logs_summary(&records));
+                        println!(
+                            "WARNING: Dropped log contents: {}",
+                            dropped_logs_summary(&records)
+                        );
                         if ack_tx.send(AckAction::AckAndStop(ack_ids.clone())).is_err() {
-                            println!("ERROR: Failed to send ack IDs back to Redis producer, exiting.");
+                            println!(
+                                "ERROR: Failed to send ack IDs back to Redis producer, exiting."
+                            );
                             exit(69);
                         }
                         buffer.clear();

@@ -288,7 +288,9 @@ pub async fn producer_loop(
                     }
                 }
                 if ack_action.should_stop() {
-                    println!("ERROR: Acked poison log bundle after non-retryable Loki failure, stopping.");
+                    println!(
+                        "ERROR: Acked poison log bundle after non-retryable Loki failure, stopping."
+                    );
                     break 'main Err(RedisError::Fatal((
                         "Non-retryable Loki response for buffered logs".into(),
                         Box::new(None),
