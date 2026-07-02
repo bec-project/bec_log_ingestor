@@ -31,14 +31,8 @@ use tokio::{
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn retryable_redis_error(
-    operation: &str,
-    key: &str,
-    error: redis::RedisError,
-) -> MetricError {
-    MetricError::Retryable(format!(
-        "Redis {operation} failed for key {key}: {error}"
-    ))
+fn retryable_redis_error(operation: &str, key: &str, error: redis::RedisError) -> MetricError {
+    MetricError::Retryable(format!("Redis {operation} failed for key {key}: {error}"))
 }
 
 fn is_timestamp_too_old_response(text: &str) -> bool {
