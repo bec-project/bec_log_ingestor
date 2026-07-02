@@ -1,3 +1,14 @@
+## [1.14.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.1...v1.14.2) (2026-07-02)
+
+
+### Bug Fixes
+
+* add dropped logs summary function and corresponding tests ([ea19bd3](https://github.com/bec-project/bec_log_ingestor/commit/ea19bd3385dffc4137db9d7b3b079633b022de84))
+* enhance retry logic for Loki responses and add unit tests ([9586d54](https://github.com/bec-project/bec_log_ingestor/commit/9586d5475c0fe194b5cd5776d885a91708a60acc))
+* refactor redis error handling to use a centralized retryable function ([d388ece](https://github.com/bec-project/bec_log_ingestor/commit/d388ece16e3d300edc5647ecf924e341c3503b5e))
+* streamline retryable Redis error handling and enhance Redis connection management ([b862dda](https://github.com/bec-project/bec_log_ingestor/commit/b862ddab5def8f97ea2446918d15af91e164e469))
+* update ack handling to use AckAction enum for better control over log acknowledgment ([e3b800d](https://github.com/bec-project/bec_log_ingestor/commit/e3b800d5a38f7ea253b093f3f36e95574153b4d1))
+
 ## [1.14.1](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.0...v1.14.1) (2026-07-01)
 
 
