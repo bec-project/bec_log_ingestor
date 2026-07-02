@@ -15,7 +15,7 @@ use tokio::{
 use crate::{
     config::IngestorConfig,
     loki_push::consumer_loop,
-    models::RedisLogBatch,
+    models::{AckAction, RedisLogBatch},
     redis_logs::{RedisError, create_redis_conn_with_retry, producer_loop},
 };
 
@@ -98,7 +98,7 @@ async fn test_loki_no_endpoint() {
             Box::leak(Box::new(config(redis_url, redis_port, "".into())));
 
         let (tx, _) = mpsc::unbounded_channel::<RedisLogBatch>();
-        let (_ack_tx, ack_rx) = mpsc::unbounded_channel::<Vec<String>>();
+        let (_ack_tx, ack_rx) = mpsc::unbounded_channel::<AckAction>();
 
         let result = producer_loop(tx, ack_rx, config, 1, 10).await;
         assert_eq!(
@@ -152,7 +152,7 @@ async fn channels_and_tasks(
 ) -> (JoinHandle<Result<(), RedisError>>, JoinHandle<()>) {
     println!("Spawning tasks");
     let (tx, rx) = mpsc::unbounded_channel::<RedisLogBatch>();
-    let (ack_tx, ack_rx) = mpsc::unbounded_channel::<Vec<String>>();
+    let (ack_tx, ack_rx) = mpsc::unbounded_channel::<AckAction>();
     let rxbox: &'static mut UnboundedReceiver<_> = Box::leak(Box::new(rx));
     let producer = tokio::spawn(producer_loop(tx, ack_rx, config, 3, 100));
     println!("Spawned producer in timeout");

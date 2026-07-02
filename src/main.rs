@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc;
 
 mod models;
-use crate::models::RedisLogBatch;
+use crate::models::{AckAction, RedisLogBatch};
 
 mod config;
 use crate::config::{IngestorConfig, assemble_config};
@@ -71,7 +71,7 @@ async fn run_services(config: &'static IngestorConfig) {
     if config.enable_logging {
         println!("DEBUG: Starting log ingestor task...");
         let (tx, mut rx) = mpsc::unbounded_channel::<RedisLogBatch>();
-        let (ack_tx, ack_rx) = mpsc::unbounded_channel::<Vec<String>>();
+        let (ack_tx, ack_rx) = mpsc::unbounded_channel::<AckAction>();
         let producer = tokio::spawn(producer_loop(
             tx,
             ack_rx,

@@ -1,5 +1,5 @@
 use crate::config::IngestorConfig;
-use crate::models::{LogMessagePack, LogMsg, RedisLogBatch, error_log_item};
+use crate::models::{AckAction, LogMessagePack, LogMsg, RedisLogBatch, error_log_item};
 use redis::Commands;
 use rmp_serde::Deserializer;
 use std::{thread, time::Duration};
@@ -209,7 +209,7 @@ fn check_connection(
 
 pub async fn producer_loop(
     tx: mpsc::UnboundedSender<RedisLogBatch>,
-    mut ack_rx: mpsc::UnboundedReceiver<Vec<String>>,
+    mut ack_rx: mpsc::UnboundedReceiver<AckAction>,
     config: &'static IngestorConfig,
     max_retries: u8,
     initial_sleep: u64,
@@ -270,15 +270,15 @@ pub async fn producer_loop(
                     break 'main Ok(());
                 }
 
-                let acked_ids = match ack_rx.recv().await {
-                    Some(acked_ids) => acked_ids,
+                let ack_action = match ack_rx.recv().await {
+                    Some(ack_action) => ack_action,
                     None => {
                         println!("INFO: Ack receiver dropped, stopping...");
                         break 'main Ok(());
                     }
                 };
                 loop {
-                    match ack_logs(&mut redis_conn, config, &acked_ids) {
+                    match ack_logs(&mut redis_conn, config, ack_action.entry_ids()) {
                         Ok(()) => break,
                         Err(e) => {
                             println!("ERROR: {:?}", e);
@@ -286,6 +286,13 @@ pub async fn producer_loop(
                                 create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
                         }
                     }
+                }
+                if ack_action.should_stop() {
+                    println!("ERROR: Acked poison log bundle after non-retryable Loki failure, stopping.");
+                    break 'main Err(RedisError::Fatal((
+                        "Non-retryable Loki response for buffered logs".into(),
+                        Box::new(None),
+                    )));
                 }
             }
             Err(e) => {
