@@ -145,9 +145,7 @@ pub(crate) fn sync_metric(result: MetricFuncResult) -> PinMetricResultFut {
 }
 
 fn retryable_redis_error(operation: &str, key: &str, error: redis::RedisError) -> MetricError {
-    MetricError::Retryable(format!(
-        "Redis {operation} failed for key {key}: {error}"
-    ))
+    MetricError::Retryable(format!("Redis {operation} failed for key {key}: {error}"))
 }
 
 // Return a Prometheus Sample struct for the given value with a timestamp of the current UTC time
@@ -230,6 +228,7 @@ pub(crate) fn metric_spawner(
     config: IngestorConfig,
     redis: MultiplexedConnection,
 ) -> impl FnMut((&String, &MetricDefinition)) -> (String, JoinHandle<()>) {
+    let redis_url = config.redis.url.full_url();
     move |(name, definition)| match definition {
         MetricDefinition::Static((func, labels, default_interval)) => (
             name.clone(),
@@ -237,6 +236,7 @@ pub(crate) fn metric_spawner(
                 func.clone(),
                 labels.clone(),
                 config.metrics.interval_for_metric(name, *default_interval),
+                redis_url.clone(),
                 redis.clone(),
                 tx.clone(),
             )),
@@ -250,6 +250,7 @@ pub(crate) fn metric_spawner(
                     metric_labels
                 },
                 metric_config.clone().clone(),
+                redis_url.clone(),
                 redis.clone(),
                 config.redis.clone(),
                 tx.clone(),
@@ -300,18 +301,136 @@ async fn polling_metric_loop<Args>(
     }
 }
 
+fn should_reconnect_redis_metric(msg: &str) -> bool {
+    msg.starts_with("Redis ")
+}
+
+async fn open_multiplexed_redis_connection(
+    redis_url: &str,
+) -> Result<MultiplexedConnection, String> {
+    let client = redis::Client::open(redis_url)
+        .map_err(|error| format!("Failed to create Redis client for {redis_url}: {error}"))?;
+    client
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|error| {
+            format!("Failed to open multiplexed Redis connection for {redis_url}: {error}")
+        })
+}
+
+async fn polling_redis_metric_loop(
+    func: RedisMetricFunc,
+    mut redis: MultiplexedConnection,
+    redis_url: String,
+    mut interval: Interval,
+    tx: UnboundedSender<TimeSeries>,
+    labels: MetricLabels,
+) {
+    loop {
+        if STOP_METRICS.load(Ordering::Relaxed) {
+            break;
+        }
+        interval.tick().await;
+        let metric_res = func.call(&mut redis).await;
+        let (output, opt_extra_labels) = match metric_res {
+            Err(MetricError::Fatal(msg)) => {
+                println!("FATAL: {msg}");
+                break;
+            }
+            Err(MetricError::Retryable(msg)) => {
+                println!("WARNING: {msg}");
+                if should_reconnect_redis_metric(&msg) {
+                    match open_multiplexed_redis_connection(&redis_url).await {
+                        Ok(new_redis) => {
+                            println!("INFO: Reconnected metrics Redis client.");
+                            redis = new_redis;
+                        }
+                        Err(reconnect_error) => {
+                            println!("WARNING: {reconnect_error}");
+                        }
+                    }
+                }
+                continue;
+            }
+            Ok(res) => res,
+        };
+        let mut owned_labels = labels.clone();
+        if let Some(extra_labels) = opt_extra_labels {
+            owned_labels.extend(extra_labels);
+        }
+        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels, "polling_metric");
+        for ts in tss {
+            if tx.send(ts).is_err() {
+                println!("TASK-FATAL: error transmitting metric to publisher channel");
+                break;
+            }
+        }
+    }
+}
+
+async fn polling_dynamic_redis_metric_loop(
+    config: DynamicMetric,
+    mut redis: MultiplexedConnection,
+    redis_url: String,
+    mut interval: Interval,
+    tx: UnboundedSender<TimeSeries>,
+    labels: MetricLabels,
+) {
+    loop {
+        if STOP_METRICS.load(Ordering::Relaxed) {
+            break;
+        }
+        interval.tick().await;
+        let metric_res = dynamic_polling_metric(&mut (redis.clone(), config.clone())).await;
+        let (output, opt_extra_labels) = match metric_res {
+            Err(MetricError::Fatal(msg)) => {
+                println!("FATAL: {msg}");
+                break;
+            }
+            Err(MetricError::Retryable(msg)) => {
+                println!("WARNING: {msg}");
+                if should_reconnect_redis_metric(&msg) {
+                    match open_multiplexed_redis_connection(&redis_url).await {
+                        Ok(new_redis) => {
+                            println!("INFO: Reconnected metrics Redis client.");
+                            redis = new_redis;
+                        }
+                        Err(reconnect_error) => {
+                            println!("WARNING: {reconnect_error}");
+                        }
+                    }
+                }
+                continue;
+            }
+            Ok(res) => res,
+        };
+        let mut owned_labels = labels.clone();
+        if let Some(extra_labels) = opt_extra_labels {
+            owned_labels.extend(extra_labels);
+        }
+        let tss: Vec<TimeSeries> = output.to_timeseries(owned_labels, "polling_metric");
+        for ts in tss {
+            if tx.send(ts).is_err() {
+                println!("TASK-FATAL: error transmitting metric to publisher channel");
+                break;
+            }
+        }
+    }
+}
+
 /// Create a future for a given metric function.
 pub(crate) async fn metric_future(
     metric_func: StaticMetricFunc,
     labels: HashMap<String, String>,
     interval: time::Interval,
+    redis_url: String,
     redis: MultiplexedConnection,
     tx: UnboundedSender<TimeSeries>,
 ) {
     match metric_func {
         StaticMetricFunc::Simple(func) => polling_metric_loop(func, (), interval, tx, labels).await,
         StaticMetricFunc::Redis(func) => {
-            polling_metric_loop(func, redis, interval, tx, labels).await
+            polling_redis_metric_loop(func, redis, redis_url, interval, tx, labels).await
         }
         StaticMetricFunc::System(func) => {
             let system = System::new_all();
@@ -423,6 +542,7 @@ fn dynamic_polling_metric<'a>(
 pub(crate) async fn dynamic_metric_future(
     labels: HashMap<String, String>,
     config: DynamicMetric,
+    redis_url: String,
     redis: MultiplexedConnection,
     redis_config: RedisConfig,
     tx: UnboundedSender<TimeSeries>,
@@ -509,10 +629,10 @@ pub(crate) async fn dynamic_metric_future(
             }
         }
         RedisReadType::Poll(interval_config) => {
-            let c = config.clone();
-            polling_metric_loop(
-                Arc::new(dynamic_polling_metric),
-                (redis.clone(), c),
+            polling_dynamic_redis_metric_loop(
+                config.clone(),
+                redis.clone(),
+                redis_url,
                 interval_config.into(),
                 tx,
                 labels,
