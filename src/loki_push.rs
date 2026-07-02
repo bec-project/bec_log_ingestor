@@ -15,6 +15,13 @@ fn is_timestamp_too_old_response(text: &str) -> bool {
     text.contains("timestamp too old")
 }
 
+fn should_retry_loki_response(status: reqwest::StatusCode, text: &str) -> bool {
+    if status.is_server_error() {
+        return !text.contains("unmarshalerDecoder: Value is string");
+    }
+    status.as_u16() == 429
+}
+
 fn retimestamp_logs_to_now(records: &mut [LogMsg]) {
     let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
     for record in records {
@@ -129,6 +136,7 @@ pub async fn consumer_loop(
         {
             Ok(res) => {
                 if !res.status().is_success() {
+                    let status = res.status();
                     let text = res
                         .text()
                         .await
@@ -143,6 +151,17 @@ pub async fn consumer_loop(
                         continue;
                     }
                     println!("ERROR: Received error response from Loki: {text}");
+                    if !should_retry_loki_response(status, &text) {
+                        println!(
+                            "WARNING: Dropping {pending_messages} buffered logs because the response is not retryable."
+                        );
+                        retries = 0;
+                        buffer.clear();
+                        records.clear();
+                        ack_ids.clear();
+                        body.clear();
+                        continue;
+                    }
                     retries = retries.saturating_add(1);
                     if retries >= 3 {
                         println!("ERROR: Maximum Loki retry attempts exceeded, exiting.");
@@ -250,6 +269,22 @@ mod tests {
             "entry for stream '{foo=\"bar\"}' has timestamp too old: 2025-10-09T12:29:45Z"
         ));
         assert!(!is_timestamp_too_old_response("internal server error"));
+    }
+
+    #[test]
+    fn test_should_retry_loki_response() {
+        assert!(should_retry_loki_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "internal server error"
+        ));
+        assert!(!should_retry_loki_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value is string"
+        ));
+        assert!(should_retry_loki_response(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            "rate limited"
+        ));
     }
 
     #[test]
