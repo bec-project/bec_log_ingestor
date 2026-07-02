@@ -31,6 +31,16 @@ use tokio::{
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn retryable_redis_error(
+    operation: &str,
+    key: &str,
+    error: redis::RedisError,
+) -> MetricError {
+    MetricError::Retryable(format!(
+        "Redis {operation} failed for key {key}: {error}"
+    ))
+}
+
 fn is_timestamp_too_old_response(text: &str) -> bool {
     text.contains("timestamp too old")
 }
@@ -60,9 +70,10 @@ fn retimestamp_timeseries_to_now(timeseries: &mut [TimeSeries]) {
 fn deployment(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_> {
     Box::pin(async move {
         let key = "user/services/status/DeviceServer";
-        let val: Vec<u8> = redis.get(key).await.map_err(|e| {
-            MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
-        })?;
+        let val: Vec<u8> = redis
+            .get(key)
+            .await
+            .map_err(|e| retryable_redis_error("GET", key, e))?;
         if val.is_empty() {
             return Err(MetricError::Retryable(format!(
                 "No status update found at {key}"
@@ -145,9 +156,10 @@ fn service_statuses(redis: &mut MultiplexedConnection) -> PinMetricResultFut<'_>
     Box::pin(async move {
         let mut labels: MetricLabels = HashMap::from([]);
         for (ep, name) in SERVICE_EPS_AND_NAMES {
-            let val: Vec<u8> = redis.get(ep).await.map_err(|e| {
-                MetricError::Retryable(e.detail().unwrap_or("Unspecified redis error").into())
-            })?;
+            let val: Vec<u8> = redis
+                .get(ep)
+                .await
+                .map_err(|e| retryable_redis_error("GET", ep, e))?;
             if val.is_empty() {
                 labels.insert(name.into(), (&ServiceStatusValue::Offline).into());
                 continue;

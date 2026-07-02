@@ -144,6 +144,12 @@ pub(crate) fn sync_metric(result: MetricFuncResult) -> PinMetricResultFut {
     Box::pin(async move { result })
 }
 
+fn retryable_redis_error(operation: &str, key: &str, error: redis::RedisError) -> MetricError {
+    MetricError::Retryable(format!(
+        "Redis {operation} failed for key {key}: {error}"
+    ))
+}
+
 // Return a Prometheus Sample struct for the given value with a timestamp of the current UTC time
 pub(crate) fn numerical_sample_now(value: f64) -> MetricOutput {
     MetricOutput::NumericalSample(Sample {
@@ -401,7 +407,7 @@ fn dynamic_polling_metric<'a>(
         let val: Vec<u8> = redis
             .get(&config.key)
             .await
-            .map_err(|e| MetricError::Retryable(e.detail().unwrap_or("Unspecified").into()))?;
+            .map_err(|e| retryable_redis_error("GET", &config.key, e))?;
         if val.is_empty() {
             Err(MetricError::Retryable(format!(
                 "No value found at dynamically defined key: {:?}",
