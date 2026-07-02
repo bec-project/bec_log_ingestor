@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::{
     config::{IngestorConfig, LokiConfig},
-    models::{LogMsg, RedisLogBatch},
+    models::{AckAction, LogMsg, RedisLogBatch},
 };
 
 fn is_timestamp_too_old_response(text: &str) -> bool {
@@ -117,7 +117,7 @@ fn make_json_body(msgs: &[LogMsg], config: &'static IngestorConfig) -> serde_jso
 
 pub async fn consumer_loop(
     rx: &mut mpsc::UnboundedReceiver<RedisLogBatch>,
-    ack_tx: mpsc::UnboundedSender<Vec<String>>,
+    ack_tx: mpsc::UnboundedSender<AckAction>,
     config: &'static IngestorConfig,
 ) {
     let mut buffer: Vec<RedisLogBatch> = Vec::with_capacity(config.loki.chunk_size.into());
@@ -125,6 +125,7 @@ pub async fn consumer_loop(
     let mut ack_ids: Vec<String> = Vec::with_capacity(config.loki.chunk_size.into());
     let mut body = String::new();
     let mut retries: u8 = 0;
+    let mut stop_requested = false;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -183,15 +184,19 @@ pub async fn consumer_loop(
                     println!("ERROR: Received error response from Loki: {text}");
                     if !should_retry_loki_response(status, &text) {
                         println!(
-                            "WARNING: Dropping {pending_messages} buffered logs because the response is not retryable."
+                            "WARNING: Acknowledging {pending_messages} buffered logs and stopping because the response is not retryable."
                         );
                         println!("WARNING: Dropped log contents: {}", dropped_logs_summary(&records));
-                        retries = 0;
+                        if ack_tx.send(AckAction::AckAndStop(ack_ids.clone())).is_err() {
+                            println!("ERROR: Failed to send ack IDs back to Redis producer, exiting.");
+                            exit(69);
+                        }
                         buffer.clear();
                         records.clear();
                         ack_ids.clear();
                         body.clear();
-                        continue;
+                        stop_requested = true;
+                        break;
                     }
                     retries = retries.saturating_add(1);
                     if retries >= 3 {
@@ -204,7 +209,7 @@ pub async fn consumer_loop(
                 }
                 retries = 0;
                 println!("DEBUG: Sent {pending_messages} logs to Loki. Response: {res:?}");
-                if ack_tx.send(ack_ids.clone()).is_err() {
+                if ack_tx.send(AckAction::Ack(ack_ids.clone())).is_err() {
                     println!("ERROR: Failed to send ack IDs back to Redis producer, exiting.");
                     exit(69);
                 }
@@ -227,7 +232,11 @@ pub async fn consumer_loop(
         body.clear();
         sleep(Duration::from_millis(10)).await;
     }
-    println!("INFO: Producer dropped, consumer exiting");
+    if stop_requested {
+        println!("ERROR: Consumer exiting after acknowledging a poison log bundle.");
+    } else {
+        println!("INFO: Producer dropped, consumer exiting");
+    }
 }
 
 #[cfg(test)]
