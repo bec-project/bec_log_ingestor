@@ -22,6 +22,36 @@ fn should_retry_loki_response(status: reqwest::StatusCode, text: &str) -> bool {
     status.as_u16() == 429
 }
 
+fn dropped_logs_summary(records: &[LogMsg]) -> String {
+    const MAX_LOGS_TO_PRINT: usize = 5;
+    const MAX_MESSAGE_CHARS: usize = 200;
+
+    let mut summary = records
+        .iter()
+        .take(MAX_LOGS_TO_PRINT)
+        .map(|record| {
+            let mut message: String = record.record.message.chars().take(MAX_MESSAGE_CHARS).collect();
+            if record.record.message.chars().count() > MAX_MESSAGE_CHARS {
+                message.push_str("...");
+            }
+            format!(
+                "[{}] {}: {}",
+                record.record.level.name, record.service_name, message
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    if records.len() > MAX_LOGS_TO_PRINT {
+        summary.push_str(&format!(
+            " | ... {} more dropped log(s)",
+            records.len() - MAX_LOGS_TO_PRINT
+        ));
+    }
+
+    summary
+}
+
 fn retimestamp_logs_to_now(records: &mut [LogMsg]) {
     let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
     for record in records {
@@ -155,6 +185,7 @@ pub async fn consumer_loop(
                         println!(
                             "WARNING: Dropping {pending_messages} buffered logs because the response is not retryable."
                         );
+                        println!("WARNING: Dropped log contents: {}", dropped_logs_summary(&records));
                         retries = 0;
                         buffer.clear();
                         records.clear();
@@ -285,6 +316,25 @@ mod tests {
             reqwest::StatusCode::TOO_MANY_REQUESTS,
             "rate limited"
         ));
+    }
+
+    #[test]
+    fn test_dropped_logs_summary() {
+        let record1: LogMsg = DummyLog {
+            msg: "hello".to_string(),
+            level: "info".to_string(),
+        }
+        .into();
+        let record2: LogMsg = DummyLog {
+            msg: "world".to_string(),
+            level: "warn".to_string(),
+        }
+        .into();
+
+        assert_eq!(
+            dropped_logs_summary(&[record1, record2]),
+            "[info] test_service: hello | [warn] test_service: world"
+        );
     }
 
     #[test]
