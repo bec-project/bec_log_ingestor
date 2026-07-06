@@ -1,3 +1,10 @@
+## [1.14.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.2...v1.14.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* move to musl image for x86_64 ([70afa71](https://github.com/bec-project/bec_log_ingestor/commit/70afa719408760d7e44412c679934ae0042f4b21))
+
 ## [1.14.2](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.1...v1.14.2) (2026-07-02)
 
 
