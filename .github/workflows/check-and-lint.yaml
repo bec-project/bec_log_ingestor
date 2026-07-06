@@ -4,7 +4,6 @@ on:
     branches:
       - main
 
-
 name: Check and Lint
 
 jobs:
@@ -50,40 +49,48 @@ jobs:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
         with:
-            components: clippy
+          components: clippy
       - uses: auguwu/clippy-action@1.4.0
         with:
-            token: ${{secrets.GITHUB_TOKEN}}
-                  
+          token: ${{secrets.GITHUB_TOKEN}}
+
   test-build-rpm:
     name: Test cross compilation and RPM build
     runs-on: "ubuntu-latest"
     env:
       AWS_LC_SYS_CMAKE_BUILDER: 1
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
 
-    - name: Checkout
-      uses: actions/checkout@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: stable
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-    
-    - name: Build RPM
-      run: |
-        cargo install cross
-        cross build --release
-        strip -s target/x86_64-unknown-linux-gnu/release/bec_log_ingestor
-        cargo install cargo-generate-rpm
-        cargo generate-rpm --signing-key=<(echo "${{ secrets.RPM_SIGNING_KEY }}")
-    
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Test binary artifact and RPM
-        path: |
-          target/x86_64-unknown-linux-gnu/release/bec_log_ingestor
-          target/generate-rpm/*.rpm
+      - name: Build RPM
+        run: |
+          cargo install cross
+          cross build --release --target x86_64-unknown-linux-musl
+          strip -s target/x86_64-unknown-linux-musl/release/bec_log_ingestor
+          cargo install cargo-generate-rpm
+          cargo generate-rpm --signing-key=<(echo "${{ secrets.RPM_SIGNING_KEY }}")
+
+      - name: Verify RPM binary is not glibc-bound
+        run: |
+          file target/x86_64-unknown-linux-musl/release/bec_log_ingestor
+          if objdump -T target/x86_64-unknown-linux-musl/release/bec_log_ingestor | grep -q 'GLIBC_'; then
+            echo "Unexpected GLIBC dependency found in musl build"
+            objdump -T target/x86_64-unknown-linux-musl/release/bec_log_ingestor | grep 'GLIBC_'
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Test binary artifact and RPM
+          path: |
+            target/x86_64-unknown-linux-musl/release/bec_log_ingestor
+            target/generate-rpm/*.rpm

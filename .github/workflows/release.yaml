@@ -10,7 +10,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-
   release:
     uses: semantic-release-action/rust/.github/workflows/release-binary.yml@v5
     permissions:
@@ -23,7 +22,7 @@ jobs:
         x86_64-unknown-linux-gnu
     secrets:
       cargo-registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-  
+
   build-rpm:
     name: Build and push RPM
     runs-on: "ubuntu-latest"
@@ -31,35 +30,34 @@ jobs:
       AWS_LC_SYS_CMAKE_BUILDER: 1
     needs: release
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
 
-    - name: Checkout
-      uses: actions/checkout@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: stable
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-    
-    - name: Build RPM
-      run: |
-        # In case checkout didn't catch the commit from release, pull after setting up toolchain
-        cargo install cross
-        git pull
-        cross build --release
-        strip -s target/x86_64-unknown-linux-gnu/release/bec_log_ingestor
-        cargo install cargo-generate-rpm
-        cargo generate-rpm --signing-key=<(echo "${{ secrets.RPM_SIGNING_KEY }}")
+      - name: Build RPM
+        run: |
+          # In case checkout didn't catch the commit from release, pull after setting up toolchain
+          cargo install cross
+          git pull
+          cross build --release --target x86_64-unknown-linux-musl
+          strip -s target/x86_64-unknown-linux-musl/release/bec_log_ingestor
+          cargo install cargo-generate-rpm
+          cargo generate-rpm --signing-key=<(echo "${{ secrets.RPM_SIGNING_KEY }}")
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: RPM artifact
-        path: target/generate-rpm/*.rpm
-      
-    - name: Push to Gitea registry
-      run: |
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RPM artifact
+          path: target/generate-rpm/*.rpm
+
+      - name: Push to Gitea registry
+        run: |
           for pkg in target/generate-rpm/*.rpm; do
             curl -X PUT \
               --user "${{ secrets.GITEA_REGISTRY_TOKEN }}" \
