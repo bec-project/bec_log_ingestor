@@ -11,7 +11,7 @@ edition = "2024"
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/x86_64-unknown-linux-gnu/release/bec_log_ingestor", dest = "/usr/local/bin/bec_log_ingestor", mode = "755" },
+    { source = "target/x86_64-unknown-linux-musl/release/bec_log_ingestor", dest = "/usr/local/bin/bec_log_ingestor", mode = "755" },
     { source = "install/bec_log_ingestor.service", dest = "/lib/systemd/system/bec_log_ingestor.service", mode = "755" },
     { source = "install/bec_log_ingestor-config.path", dest = "/lib/systemd/system/bec_log_ingestor-config.path", mode = "644" },
     { source = "install/bec_log_ingestor-config.service", dest = "/lib/systemd/system/bec_log_ingestor-config.service", mode = "644" },
