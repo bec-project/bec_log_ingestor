@@ -1,3 +1,11 @@
+## [1.14.4](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.3...v1.14.4) (2026-07-07)
+
+
+### Bug Fixes
+
+* serialize exception info ([347035a](https://github.com/bec-project/bec_log_ingestor/commit/347035a9748ddafafa880f0849a5818f54a0bbaa))
+* **tests:** improve log level stream assertions in tests ([3751749](https://github.com/bec-project/bec_log_ingestor/commit/3751749e02b0a185d0e4dae5d02153fd7498b9be))
+
 ## [1.14.3](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.2...v1.14.3) (2026-07-06)
 
 
