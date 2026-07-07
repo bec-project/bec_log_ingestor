@@ -64,6 +64,14 @@ fn retimestamp_logs_to_now(records: &mut [LogMsg]) {
     }
 }
 
+fn stringify_exception(exception: Option<&serde_json::Value>) -> String {
+    match exception {
+        None | Some(serde_json::Value::Null) => "None".into(),
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+    }
+}
+
 /// Convert a LogRecord to the document we want Loki to ingest
 fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> (serde_json::Value, (String, String)) {
     (
@@ -78,7 +86,7 @@ fn json_from_logmsg(msg: &LogMsg, config: &LokiConfig) -> (serde_json::Value, (S
                 "module": msg.record.module,
                 "beamline_name": config.beamline_name,
                 "proc_id": msg.record.process.id.to_string(),
-                "exception": msg.record.exception.clone().unwrap_or("None".into())
+                "exception": stringify_exception(msg.record.exception.as_ref())
             }
         ]),
         (
@@ -372,6 +380,23 @@ mod tests {
     }
 
     #[test]
+    fn test_stringify_exception() {
+        assert_eq!(stringify_exception(None), "None");
+        assert_eq!(
+            stringify_exception(Some(&serde_json::Value::String("boom".into()))),
+            "boom"
+        );
+        assert_eq!(
+            stringify_exception(Some(&serde_json::json!({
+                "type": "AlarmError",
+                "status": 7,
+                "severity": 2
+            }))),
+            r#"{"severity":2,"status":7,"type":"AlarmError"}"#
+        );
+    }
+
+    #[test]
     fn test_make_docs_values_empty() {
         let records: Vec<LogMsg> = vec![];
         let docs = make_json_body(&records, config());
@@ -396,6 +421,98 @@ mod tests {
                 "{{\"streams\":[{{\"stream\":{{\"hostname\":\"{}\",\"label\":\"bec_logs\",\"level\":\"info\",\"service_name\":\"test_service\"}},\"values\":[[\"0\",\"hello\",{{\"beamline_name\":\"x99xa\",\"exception\":\"None\",\"file_location\":\"\",\"file_name\":\"\",\"function\":\"\",\"line\":\"0\",\"module\":\"\",\"proc_id\":\"0\"}}]]}}]}}",
                 hostname
             )
+        );
+    }
+
+    #[test]
+    fn test_make_docs_values_escapes_special_characters() {
+        let mut record: LogMsg = DummyLog {
+            msg: "Subscription value callback exception (name=\"Thermocouple_EH1_1\")\nnext line"
+                .to_string(),
+            level: "error".to_string(),
+        }
+        .into();
+        record.record.exception = Some(serde_json::json!({
+            "type": "DeviceError",
+            "value": "can't parse \"quoted\" value"
+        }));
+
+        let body = make_json_body(&vec![record], config()).to_string();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("generated Loki body should be valid JSON");
+        let entry = &parsed["streams"][0]["values"][0];
+
+        assert_eq!(
+            entry[1],
+            "Subscription value callback exception (name=\"Thermocouple_EH1_1\")\nnext line"
+        );
+        assert_eq!(
+            entry[2]["exception"],
+            r#"{"type":"DeviceError","value":"can't parse \"quoted\" value"}"#
+        );
+    }
+
+    #[test]
+    fn test_make_docs_values_supports_all_log_levels() {
+        let cases = vec![
+            ("TRACE", "Trace message from DeviceServer", None),
+            ("DEBUG", "Debug message from DeviceServer", None),
+            ("INFO", "Waiting for DeviceServer.", None),
+            ("SUCCESS", "Scan completed successfully", None),
+            ("WARNING", "Temperature drift detected", None),
+            (
+                "ERROR",
+                "Subscription value callback exception",
+                Some(serde_json::json!({
+                    "type": "RuntimeError",
+                    "value": "Motion failed: hz is in an alarm state status=7 severity=2",
+                    "traceback": true
+                })),
+            ),
+            (
+                "CRITICAL",
+                "Critical service failure",
+                Some(serde_json::Value::String(
+                    "Scan aborted after unrecoverable alarm".into(),
+                )),
+            ),
+        ];
+
+        let records = cases
+            .iter()
+            .map(|(level, message, exception)| {
+                let mut record: LogMsg = DummyLog {
+                    msg: (*message).to_string(),
+                    level: (*level).to_string(),
+                }
+                .into();
+                record.record.exception = exception.clone();
+                record
+            })
+            .collect::<Vec<_>>();
+
+        let body = make_json_body(&records, config()).to_string();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("generated Loki body should be valid JSON");
+        let streams = parsed["streams"]
+            .as_array()
+            .expect("streams should be a JSON array");
+
+        assert_eq!(streams.len(), cases.len());
+
+        for (expected, stream) in cases.iter().zip(streams.iter()) {
+            assert_eq!(stream["stream"]["level"], expected.0);
+            assert_eq!(stream["stream"]["service_name"], "test_service");
+            assert_eq!(stream["values"][0][1], expected.1);
+        }
+
+        assert_eq!(
+            streams[5]["values"][0][2]["exception"],
+            r#"{"traceback":true,"type":"RuntimeError","value":"Motion failed: hz is in an alarm state status=7 severity=2"}"#
+        );
+        assert_eq!(
+            streams[6]["values"][0][2]["exception"],
+            "Scan aborted after unrecoverable alarm"
         );
     }
 
