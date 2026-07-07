@@ -500,18 +500,30 @@ mod tests {
 
         assert_eq!(streams.len(), cases.len());
 
-        for (expected, stream) in cases.iter().zip(streams.iter()) {
-            assert_eq!(stream["stream"]["level"], expected.0);
+        let streams_by_level = streams
+            .iter()
+            .map(|stream| {
+                let level = stream["stream"]["level"]
+                    .as_str()
+                    .expect("stream level should be a string");
+                (level, stream)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for expected in &cases {
+            let stream = streams_by_level
+                .get(expected.0)
+                .expect("expected a stream for each log level");
             assert_eq!(stream["stream"]["service_name"], "test_service");
             assert_eq!(stream["values"][0][1], expected.1);
         }
 
         assert_eq!(
-            streams[5]["values"][0][2]["exception"],
+            streams_by_level["ERROR"]["values"][0][2]["exception"],
             r#"{"traceback":true,"type":"RuntimeError","value":"Motion failed: hz is in an alarm state status=7 severity=2"}"#
         );
         assert_eq!(
-            streams[6]["values"][0][2]["exception"],
+            streams_by_level["CRITICAL"]["values"][0][2]["exception"],
             "Scan aborted after unrecoverable alarm"
         );
     }
