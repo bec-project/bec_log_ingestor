@@ -1,3 +1,11 @@
+## [1.14.5](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.4...v1.14.5) (2026-08-03)
+
+
+### Bug Fixes
+
+* logging endpoint updated in bec core commit daf2ba6 ([472f19e](https://github.com/bec-project/bec_log_ingestor/commit/472f19e93b7d0011418ac666c3376e4e7c8ac875))
+* use old or new logging endpoint depending on which one exists ([ad1f5be](https://github.com/bec-project/bec_log_ingestor/commit/ad1f5be49a924a83e37df313850fcf9edf45a2f7))
+
 ## [1.14.4](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.3...v1.14.4) (2026-07-07)
 
 
