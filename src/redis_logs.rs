@@ -6,7 +6,8 @@ use std::{thread, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-const LOGGING_ENDPOINT: [&str; 1] = ["user/log"];
+const USER_LOGGING_ENDPOINT: [&str; 1] = ["user/log"];
+const INFO_LOGGING_ENDPOINT: [&str; 1] = ["info/log"];
 const KEY_MISMATCH: &str = "We got a response for request with one key, there must be one key!";
 const NO_DATA: &str = "Uh oh, log message contained no data";
 const BAD_DATA: &str = "Log message data not binary-data or could not be decoded!";
@@ -34,20 +35,25 @@ fn fatal_code(e: redis::RedisError) -> RedisError {
     ))
 }
 
+pub struct RedisConnWithKey {
+    pub conn: redis::Connection,
+    pub key: &'static str,
+}
+
 pub fn create_redis_conn_with_retry(
     config: &'static IngestorConfig,
     max_retries: u8,
     initial_sleep: u64,
-) -> Result<redis::Connection, RedisError> {
+) -> Result<RedisConnWithKey, RedisError> {
     let mut retries: u8 = 0;
     let mut last_error: Option<RedisError> = None;
     while retries < max_retries {
         match redis::Client::open(config.redis.url.full_url()) {
             Ok(c) => match c.get_connection() {
-                Ok(mut c) => {
+                Ok(c) => {
                     println!("INFO: Reconnected to redis, checking logging keys and groups...");
-                    match check_connection(&mut c, config) {
-                        Ok(()) => return Ok(c),
+                    match check_connection(c, config) {
+                        Ok(c_with_key) => return Ok(c_with_key),
                         Err(e) => last_error = Some(e),
                     }
                 }
@@ -76,12 +82,13 @@ fn stream_read_opts(config: &'static IngestorConfig) -> redis::streams::StreamRe
 /// Fetch unread logs for redis.
 /// Returns a tuple of the last ID read and a Vec of msgpacked entries from the log stream endpoint
 fn read_logs(
-    redis_conn: &mut redis::Connection,
+    redis_conn: &mut RedisConnWithKey,
     last_id: &String,
     config: &'static IngestorConfig,
 ) -> Result<ReadLogsResult, RedisError> {
     let raw_reply: redis::streams::StreamReadReply = redis_conn
-        .xread_options(&LOGGING_ENDPOINT, &[last_id], &stream_read_opts(config))
+        .conn
+        .xread_options(&[redis_conn.key], &[last_id], &stream_read_opts(config))
         .map_err(retryable_code)?;
 
     if raw_reply.keys.is_empty() {
@@ -147,7 +154,7 @@ fn extract_records(messages: &Vec<LogMessagePack>) -> Vec<LogMsg> {
 }
 
 fn ack_logs(
-    redis_conn: &mut redis::Connection,
+    redis_conn: &mut RedisConnWithKey,
     config: &'static IngestorConfig,
     entry_ids: &[String],
 ) -> Result<(), RedisError> {
@@ -155,20 +162,22 @@ fn ack_logs(
         return Ok(());
     }
     let _: usize = redis_conn
-        .xack(&LOGGING_ENDPOINT, &config.redis.consumer_group, entry_ids)
+        .conn
+        .xack(&[redis_conn.key], &config.redis.consumer_group, entry_ids)
         .map_err(retryable_code)?;
     Ok(())
 }
 
 fn setup_consumer_group(
-    conn: &mut redis::Connection,
+    mut conn: redis::Connection,
     config: &'static IngestorConfig,
-) -> Result<(), RedisError> {
+    log_key: &'static str,
+) -> Result<RedisConnWithKey, RedisError> {
     println!("INFO: Setting up consumer group");
-    match conn.xgroup_create::<_, _, _, ()>(&LOGGING_ENDPOINT, &config.redis.consumer_group, "0") {
+    match conn.xgroup_create::<_, _, _, ()>(log_key, &config.redis.consumer_group, "0") {
         Ok(_) => {
             println!("INFO: Done setting up consumer group");
-            Ok(())
+            Ok(RedisConnWithKey { conn, key: log_key })
         }
         Err(error) => {
             if let Some(code) = error.code()
@@ -178,7 +187,7 @@ fn setup_consumer_group(
                     "INFO: Group {} already exists, rejoining with ID {}",
                     &config.redis.consumer_group, &config.redis.consumer_id
                 );
-                Ok(())
+                Ok(RedisConnWithKey { conn, key: log_key })
             } else {
                 Err(RedisError::Fatal((
                     format!(
@@ -194,16 +203,24 @@ fn setup_consumer_group(
 }
 
 fn check_connection(
-    redis_conn: &mut redis::Connection,
+    mut redis_conn: redis::Connection,
     config: &'static IngestorConfig,
-) -> Result<(), RedisError> {
-    let key_exists = redis_conn
-        .exists::<&str, bool>(LOGGING_ENDPOINT[0])
+) -> Result<RedisConnWithKey, RedisError> {
+    let user_key_exists = redis_conn
+        .exists::<&str, bool>(USER_LOGGING_ENDPOINT[0])
         .map_err(fatal_code)?;
-    if !key_exists {
+    let info_key_exists = redis_conn
+        .exists::<&str, bool>(INFO_LOGGING_ENDPOINT[0])
+        .map_err(fatal_code)?;
+    if !user_key_exists && !info_key_exists {
         Err(RedisError::Retryable("No logging endpoint found".into()))
     } else {
-        setup_consumer_group(redis_conn, config)
+        let key = if !user_key_exists {
+            INFO_LOGGING_ENDPOINT[0]
+        } else {
+            USER_LOGGING_ENDPOINT[0]
+        };
+        setup_consumer_group(redis_conn, config, key)
     }
 }
 
