@@ -6,7 +6,7 @@ use std::{thread, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-const LOGGING_ENDPOINT: [&str; 1] = ["info/log"];
+const LOGGING_ENDPOINT: [&str; 1] = ["user/log"];
 const KEY_MISMATCH: &str = "We got a response for request with one key, there must be one key!";
 const NO_DATA: &str = "Uh oh, log message contained no data";
 const BAD_DATA: &str = "Log message data not binary-data or could not be decoded!";
