@@ -1,3 +1,11 @@
+## [1.14.6](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.5...v1.14.6) (2026-09-01)
+
+
+### Bug Fixes
+
+* adjust service restart limits for improved stability ([2f1926c](https://github.com/bec-project/bec_log_ingestor/commit/2f1926c1faabcf828e4f74a5d7b33f68d2eec69e))
+* reduce logging verbosity by commenting out debug print statements ([8fbdff4](https://github.com/bec-project/bec_log_ingestor/commit/8fbdff45e7436ae12ab40aac2506234969be191a))
+
 ## [1.14.5](https://github.com/bec-project/bec_log_ingestor/compare/v1.14.4...v1.14.5) (2026-08-03)
 
 
