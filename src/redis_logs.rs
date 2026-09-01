@@ -233,7 +233,7 @@ pub async fn producer_loop(
 ) -> Result<(), RedisError> {
     let mut redis_conn = create_redis_conn_with_retry(config, max_retries, initial_sleep)?;
     let mut stream_read_id: String = "0".into();
-    println!("DEBUG: Starting Loki task producer loop");
+    // println!("DEBUG: Starting Loki task producer loop");
     'main: loop {
         // Sleep between blocking calls prevents starvation of other tasks in thread limited environments
         sleep(Duration::from_millis(10)).await;
