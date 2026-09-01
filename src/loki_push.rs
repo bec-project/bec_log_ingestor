@@ -169,7 +169,7 @@ pub async fn consumer_loop(
             body = make_json_body(&records, config).to_string();
         }
         let pending_messages = records.len();
-        println!("DEBUG: {pending_messages} log messages waiting to be pushed to Loki.");
+        // println!("DEBUG: {pending_messages} log messages waiting to be pushed to Loki.");
         match client
             .post(&config.loki.url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -226,7 +226,7 @@ pub async fn consumer_loop(
                     continue;
                 }
                 retries = 0;
-                println!("DEBUG: Sent {pending_messages} logs to Loki. Response: {res:?}");
+                // println!("DEBUG: Sent {pending_messages} logs to Loki. Response: {res:?}");
                 if ack_tx.send(AckAction::Ack(ack_ids.clone())).is_err() {
                     println!("ERROR: Failed to send ack IDs back to Redis producer, exiting.");
                     exit(69);

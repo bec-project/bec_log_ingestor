@@ -277,7 +277,7 @@ async fn watchdog_loop(
             break;
         }
         interval.tick().await;
-        println!("DEBUG: Watchdog checking {:?}", futs.lock().await.keys());
+        // println!("DEBUG: Watchdog checking {:?}", futs.lock().await.keys());
         let finished: Vec<String> = {
             futs.lock()
                 .await
@@ -298,7 +298,7 @@ async fn watchdog_loop(
                 }
             }
         }
-        println!("DEBUG: Watchdog done.");
+        // println!("DEBUG: Watchdog done.");
     }
 }
 
@@ -321,7 +321,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
             break;
         }
         interval.tick().await;
-        println!("DEBUG: publishing collected metrics to Mimir");
+        // println!("DEBUG: publishing collected metrics to Mimir");
         let open = if buffer.is_empty() {
             let open = rx.recv_many(&mut buffer, chunk_size).await;
             if open == 0 {
@@ -392,12 +392,12 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
                         println!("ERROR: Maximum retry attempts exceeded, exiting.");
                         exit(0x45); // Service unavailable
                     }
-                    println!("DEBUG: Retrying in 5s.");
+                    // println!("DEBUG: Retrying in 5s.");
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
                 retries = 0;
-                println!("DEBUG: Sent {open} metrics to Mimir.");
+                // println!("DEBUG: Sent {open} metrics to Mimir.");
             }
             Err(res) => {
                 println!("ERROR: {res:?}");
@@ -407,7 +407,7 @@ async fn consumer_loop(rx: &mut mpsc::UnboundedReceiver<TimeSeries>, config: Met
                     exit(0x45); // Service unavailable
                 }
                 println!("WARNING: Send attempt {retries} failed; will retry buffered metrics.");
-                println!("DEBUG: Retrying in 5s.");
+                // println!("DEBUG: Retrying in 5s.");
                 sleep(Duration::from_secs(5)).await;
                 continue;
             }

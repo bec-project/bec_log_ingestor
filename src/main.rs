@@ -62,14 +62,14 @@ async fn run_services(config: &'static IngestorConfig) {
     println!("INFO: Starting log ingestor with config: \n {:?}", &config);
 
     let metrics = if config.enable_metrics {
-        println!("DEBUG: Starting metrics task...");
+        // println!("DEBUG: Starting metrics task...");
         tokio::spawn(metrics_loop(config, metric_definitions(config)))
     } else {
         tokio::spawn(futures::future::ready(()))
     };
 
     if config.enable_logging {
-        println!("DEBUG: Starting log ingestor task...");
+        // println!("DEBUG: Starting log ingestor task...");
         let (tx, mut rx) = mpsc::unbounded_channel::<RedisLogBatch>();
         let (ack_tx, ack_rx) = mpsc::unbounded_channel::<AckAction>();
         let producer = tokio::spawn(producer_loop(
